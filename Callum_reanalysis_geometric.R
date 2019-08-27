@@ -318,13 +318,17 @@ fams.ereb <- fams[which(fams$FAMILY == "Erebidae"), ]
 ## we now need to introduce land-use data for each trap
 
 # read in this data which has been prepared elsewhere, and cut out the few columns we actually need
-landuse <- read.csv("Checked/siteswithall.csv", header = TRUE)
+landuse <- read.csv("Checked/Landuse and climate/siteswithall.csv", header = TRUE)
 
 summary(landuse)
 
-landuse.trim <- landuse[,c('large','small','SITE','EASTING','NORTHING','HEast','HNorth','LAT','LON')]
+landuse.trim <- landuse[,c('SITE','LAT','LON','EASTING','NORTHING','HEast','HNorth','small','large',
+                           'small90','smallds','Class2007','Class1990','ClassDS',
+                           'ChangeTest90','ChangeTestDS','ChangeFactor90','ChangeFactorDS')]
 
-colnames(landuse.trim) <- c("large","small","trap","EASTING","NORTHING","HEast","HNorth","LAT","LON")
+colnames(landuse.trim) <- c('trap','LAT','LON','EASTING','NORTHING','HEast','HNorth','small','large',
+                            'small90','smallds','Class2007','Class1990','ClassDS',
+                            'ChangeTest90','ChangeTestDS','ChangeFactor90','ChangeFactorDS')
 
 # now merge this land-use data into the main dataset
 all.landuse <- merge(landuse.trim, alltraps.no0)
@@ -355,7 +359,19 @@ arable.large <- all.landuse[which(all.landuse$large %in% arableclass), ]
 urban.small <- all.landuse[which(all.landuse$small %in% urbanclass), ]
 urban.large <- all.landuse[which(all.landuse$large %in% urbanclass), ]
 
+changing.small <- all.landuse[which(all.landuse$ChangeTest90 == F), ]
+same.small <- all.landuse[which(all.landuse$ChangeTest90 == T), ]
 
+changing.small.DS <- all.landuse[which(all.landuse$ChangeTestDS == F), ]
+same.small.DS <- all.landuse[which(all.landuse$ChangeTestDS == T), ]
+
+# break to inspect what has gone on for all the different sites land-use wise
+
+landuse.change <- ddply(all.landuse, .(trap,ChangeFactorDS,ChangeTestDS,ChangeFactor90,ChangeTest90), summarise,
+                        Count = sum(Count))
+summary(landuse.change)
+
+write.csv(landuse.change, "Checked/Landuse and climate/FinalSites.csv", row.names = F)
 
 #### now do the analyses and accompanying figure panels for Fig 1 - raw biomass
 
@@ -1222,6 +1238,8 @@ ggsave("Checked/Figures/Panels/Fig1d.svg", plot = fig1d, device = svg,
 
 
 
+
+
 ### Fig 1e - biomass from broad land-uses with segmented regression
 
 # our next step is to do the same thing again, but with data split into landuse categories
@@ -1452,6 +1470,318 @@ fig1es
 
 ggsave("Checked/Figures/Panels/Fig1e.svg", plot = fig1es, device = svg,
        width = 240, height = 160, units = "mm", limitsize = T)
+
+
+## partially repeat this analysis to see whether the pattern holds for traps that have changed land-use between 1990-2007
+
+## land use changed
+# first, fit the regular linear model, trying a few different error distributions
+hist(changing.small$inopbiomass)
+hist(log(changing.small$inopbiomass))
+
+
+
+# log-normal
+model1escG <- lm(log(inopbiomass) ~ YEAR,
+                 data = changing.small) 
+
+summary(model1escG)
+
+chkres(model1escG, changing.small$trap, changing.small$YEAR)
+#
+#
+#
+#
+
+
+drop1(model1escG, test = "F")
+BIC(model1escG)
+
+# now fit the segmented model, setting 1979 as the start point to search for the break point
+
+model1esc.seg <- segmented(model1escG, seg.Z = ~YEAR, psi = 1979)
+
+summary(model1esc.seg)
+BIC(model1esc.seg)
+
+anova(model1esc.seg, model1escG)
+
+chkres(model1esc.seg, changing.small$trap, changing.small$YEAR)
+
+# set up the data for a figure
+
+newdataesc <- expand.grid(YEAR = changing.small$YEAR, trap = levels(droplevels(changing.small$trap)), inopbiomass = 0)
+newdataesc$inopbiomass <- exp(predict(model1esc.seg, newdata = newdataesc, type="response"))
+newdataesc <- ddply(newdataesc, .(YEAR), numcolwise(mean))
+
+averageesc <- ddply(changing.small,.(YEAR), summarise,
+                    inopbiomass = gm_mean(inopbiomass))# TO ADD THE AVERAGE BIOMASS LINE
+
+## same land use
+
+# first, fit the regular linear model, trying a few different error distributions
+hist(same.small$inopbiomass)
+hist(log(same.small$inopbiomass))
+
+
+
+# log-normal
+model1essG <- lm(log(inopbiomass) ~ YEAR,
+                 data = same.small) 
+
+summary(model1essG)
+
+chkres(model1essG, same.small$trap, same.small$YEAR)
+#
+#
+#
+#
+
+
+drop1(model1essG, test = "F")
+BIC(model1essG)
+
+# now fit the segmented model, setting 1979 as the start point to search for the break point
+
+model1ess.seg <- segmented(model1essG, seg.Z = ~YEAR, psi = 1979)
+
+summary(model1ess.seg)
+BIC(model1ess.seg)
+
+anova(model1ess.seg, model1essG)
+
+chkres(model1ess.seg, same.small$trap, same.small$YEAR)
+
+# set up the data for a figure
+
+newdataess <- expand.grid(YEAR = same.small$YEAR, trap = levels(droplevels(same.small$trap)), inopbiomass = 0)
+newdataess$inopbiomass <- exp(predict(model1ess.seg, newdata = newdataess, type="response"))
+newdataess <- ddply(newdataess, .(YEAR), numcolwise(mean))
+
+averageess <- ddply(same.small,.(YEAR), summarise,
+                    inopbiomass = gm_mean(inopbiomass))# TO ADD THE AVERAGE BIOMASS LINE
+
+
+
+## now make a figure
+
+# group all these extra data sets together
+newdataesc$Landuse <- "Changed"
+newdataess$Landuse <- "Consistent"
+
+averageesc$Landuse <- "Changed"
+averageess$Landuse <- "Consistent"
+
+
+
+newdataessc <- rbind(newdataess, newdataesc)
+averageessc <- rbind(averageess, averageesc)
+
+
+## finally, construct a figure
+
+
+fig1esc <- ggplot()+
+  geom_line(data = averageessc, aes(x= YEAR, y = inopbiomass, colour=Landuse), alpha= 0.75)+
+  geom_line(data=newdataessc, aes(x=YEAR, y=inopbiomass, colour=Landuse), size = 1) +
+  scale_colour_manual(values = c("royalblue","goldenrod"), name = "Land-use")+
+  scale_y_log10(breaks = c(1000,10000,100000,1000000), labels = comma, limits = c(200,1200000)) +
+  labs(y = "Mean annual biomass \nper trap (mg)" , x = "Year") +
+  theme_classic()+
+  theme(axis.text=element_text(size=15),
+        axis.title=element_text(size=15),
+        legend.text=element_text(size=15),
+        legend.title=element_text(size=17))
+
+fig1esc
+
+ggsave("Checked/Figures/FigLanduseChange.svg", plot = fig1esc, device = svg,
+       width = 240, height = 160, units = "mm", limitsize = T)
+
+
+
+## and construct a figure that replicates Fig 1, but with only the consistent traps
+
+fig1ac <- ggplot(same.small, aes(x = YEAR, y = inopbiomass))+
+  geom_line(aes(group = trap),
+            colour = "grey70") +
+  geom_line(data=newdataess, aes(x=YEAR, y=inopbiomass)) +
+  geom_line(data = averageess, aes(x= YEAR, y = inopbiomass), size= 0.75)+
+  scale_y_log10(breaks = c(1000,10000,100000, 1000000), labels = comma, limits = c(200,1200000)) +
+  labs(y = "Total annual \nbiomass (mg)" , x = "Year") +
+  theme_classic()+
+  theme(axis.text=element_text(size=15),
+        axis.title=element_text(size=15),
+        legend.position = "none")
+
+fig1ac
+
+
+ggsave("Checked/Figures/FigLanduseConsistent.svg", plot = fig1ac, device = svg,
+       width = 240, height = 160, units = "mm", limitsize = T)
+
+
+
+
+## repeat this for the Dudley Stamp land-use (c. 1930)
+
+## land use changed
+# first, fit the regular linear model, trying a few different error distributions
+hist(changing.small.DS$inopbiomass)
+hist(log(changing.small.DS$inopbiomass))
+
+
+
+# log-normal
+model1escG.DS <- lm(log(inopbiomass) ~ YEAR,
+                 data = changing.small.DS) 
+
+summary(model1escG.DS)
+
+chkres(model1escG.DS, changing.small.DS$trap, changing.small.DS$YEAR)
+#
+#
+#
+#
+
+
+drop1(model1escG.DS, test = "F")
+BIC(model1escG.DS)
+
+# now fit the segmented model, setting 1979 as the start point to search for the break point
+
+model1esc.seg.DS <- segmented(model1escG.DS, seg.Z = ~YEAR, psi = 1979)
+
+summary(model1esc.seg.DS)
+BIC(model1esc.seg.DS)
+
+anova(model1esc.seg.DS, model1escG.DS)
+
+chkres(model1esc.seg.DS, changing.small.DS$trap, changing.small.DS$YEAR)
+
+# set up the data for a figure
+
+newdataesc.DS <- expand.grid(YEAR = changing.small.DS$YEAR, trap = levels(droplevels(changing.small.DS$trap)), inopbiomass = 0)
+newdataesc.DS$inopbiomass <- exp(predict(model1esc.seg.DS, newdata = newdataesc.DS, type="response"))
+newdataesc.DS <- ddply(newdataesc.DS, .(YEAR), numcolwise(mean))
+
+averageesc.DS <- ddply(changing.small.DS,.(YEAR), summarise,
+                    inopbiomass = gm_mean(inopbiomass))# TO ADD THE AVERAGE BIOMASS LINE
+
+## same land use
+
+# first, fit the regular linear model, trying a few different error distributions
+hist(same.small.DS$inopbiomass)
+hist(log(same.small.DS$inopbiomass))
+
+
+
+# log-normal
+model1essG.DS <- lm(log(inopbiomass) ~ YEAR,
+                 data = same.small.DS) 
+
+summary(model1essG.DS)
+
+chkres(model1essG.DS, same.small.DS$trap, same.small.DS$YEAR)
+#
+#
+#
+#
+
+
+drop1(model1essG.DS, test = "F")
+BIC(model1essG.DS)
+
+# now fit the segmented model, setting 1979 as the start point to search for the break point
+
+model1ess.seg.DS <- segmented(model1essG.DS, seg.Z = ~YEAR, psi = 1979)
+
+summary(model1ess.seg.DS)
+BIC(model1ess.seg.DS)
+
+anova(model1ess.seg.DS, model1essG.DS)
+
+chkres(model1ess.seg.DS, same.small.DS$trap, same.small.DS$YEAR)
+
+# set up the data for a figure
+
+newdataess.DS <- expand.grid(YEAR = same.small.DS$YEAR, trap = levels(droplevels(same.small.DS$trap)), inopbiomass = 0)
+newdataess.DS$inopbiomass <- exp(predict(model1ess.seg.DS, newdata = newdataess.DS, type="response"))
+newdataess.DS <- ddply(newdataess.DS, .(YEAR), numcolwise(mean))
+
+averageess.DS <- ddply(same.small.DS,.(YEAR), summarise,
+                    inopbiomass = gm_mean(inopbiomass))# TO ADD THE AVERAGE BIOMASS LINE
+
+
+
+## now make a figure
+
+# group all these extra data sets together
+newdataesc.DS$Landuse <- "Changed"
+newdataess.DS$Landuse <- "Consistent"
+
+averageesc.DS$Landuse <- "Changed"
+averageess.DS$Landuse <- "Consistent"
+
+
+
+newdataessc.DS <- rbind(newdataess.DS, newdataesc.DS)
+averageessc.DS <- rbind(averageess.DS, averageesc.DS)
+
+
+## finally, construct a figure
+
+
+fig1esc.DS <- ggplot()+
+  geom_line(data = averageessc.DS, aes(x= YEAR, y = inopbiomass, colour=Landuse), alpha= 0.75)+
+  geom_line(data=newdataessc.DS, aes(x=YEAR, y=inopbiomass, colour=Landuse), size = 1) +
+  scale_colour_manual(values = c("royalblue","goldenrod"), name = "Land-use")+
+  scale_y_log10(breaks = c(1000,10000,100000,1000000), labels = comma, limits = c(200,1200000)) +
+  labs(y = "Mean annual biomass \nper trap (mg)" , x = "Year") +
+  theme_classic()+
+  theme(axis.text=element_text(size=15),
+        axis.title=element_text(size=15),
+        legend.text=element_text(size=15),
+        legend.title=element_text(size=17))
+
+fig1esc.DS
+
+ggsave("Checked/Figures/FigLanduseChangeDS.svg", plot = fig1esc.DS, device = svg,
+       width = 240, height = 160, units = "mm", limitsize = T)
+
+
+
+## and construct a figure that replicates Fig 1, but with only the consistent traps
+
+fig1ac.DS <- ggplot(same.small.DS, aes(x = YEAR, y = inopbiomass))+
+  geom_line(aes(group = trap),
+            colour = "grey70") +
+  geom_line(data=newdataess.DS, aes(x=YEAR, y=inopbiomass)) +
+  geom_line(data = averageess.DS, aes(x= YEAR, y = inopbiomass), size= 0.75)+
+  scale_y_log10(breaks = c(1000,10000,100000, 1000000), labels = comma, limits = c(200,1200000)) +
+  labs(y = "Total annual \nbiomass (mg)" , x = "Year") +
+  theme_classic()+
+  theme(axis.text=element_text(size=15),
+        axis.title=element_text(size=15),
+        legend.position = "none")
+
+fig1ac.DS
+
+
+ggsave("Checked/Figures/FigLanduseConsistentDS.svg", plot = fig1ac, device = svg,
+       width = 240, height = 160, units = "mm", limitsize = T)
+
+
+
+m.90DS <- grid.arrange(fig1ac,fig1ac.DS)
+
+ggsave("Checked/Figures/FigLanduseConsistentBoth.svg", plot = m.90DS, device = svg,
+       width = 240, height = 320, units = "mm", limitsize = T)
+
+
+
+
+
 
 
 
@@ -1827,6 +2157,129 @@ ggsave("Checked/Figures/Fig1_small.svg", plot = fig1.small, device = svg,
        width = 350, height = 250, units = "mm", limitsize = T)
 
 
+
+
+
+### before continuing, we want to inspect the family * land-use interaction and produce a panel plot
+
+# first, merge land-use data into the family data
+
+fams.ereb$trap <- fams.ereb$TRAPNAME
+fams.geom$trap <- fams.geom$TRAPNAME
+fams.noct$trap <- fams.noct$TRAPNAME
+
+fams.ereb <- merge(fams.ereb, landuse.trim)
+fams.geom <- merge(fams.geom, landuse.trim)
+fams.noct <- merge(fams.noct, landuse.trim)
+
+# now the loop will be easier to write if we combine these...
+fams.comb <- rbind(fams.ereb,fams.geom,fams.noct)
+
+fams.list <- levels(droplevels(fams.comb$FAMILY))
+
+## and we need to classify the land-uses, as above
+fams.comb$CLASS <- as.factor(ifelse(fams.comb$small %in% grasslandclass, "Grassland",
+                          ifelse(fams.comb$small %in% woodlandclass, "Woodland",
+                                 ifelse(fams.comb$small %in% arableclass, "Arable",
+                                        ifelse(fams.comb$small %in% urbanclass, "Urban","Fail")))))
+
+
+uses.list <- levels(droplevels(fams.comb$CLASS))
+
+# now construct a loop, outputting a figure at the end
+
+use.plots <- NULL
+
+for (use in uses.list){
+  print(use)
+  
+  i <- match(use, uses.list)
+  
+  use.dat <- fams.comb[which(fams.comb$CLASS == use), ]
+  
+  newdatause <- data.frame()
+  averageuse <- data.frame()
+  
+  for (fam in fams.list){
+    print(fam)
+    
+    fam.use <- use.dat[which(use.dat$FAMILY == fam), ]
+    
+    comblin <- lm(log(inopbiomass) ~ YEAR,
+                    data = fam.use) 
+    
+    BIC_comblin <- BIC(comblin)
+    
+    combseg <- segmented(comblin, seg.Z = ~YEAR, psi = 1990)
+    
+    
+    BIC_combseg <- BIC(combseg)
+    
+    
+    # set up the data for a figure
+    newdatacomb <- expand.grid(YEAR = 1967:2017, inopbiomass = 0)
+    
+    if(BIC_comblin > BIC_combseg){
+      newdatacomb$inopbiomass <- exp(predict(combseg, newdata = newdatacomb, type="response"))
+    } else {
+      newdatacomb$inopbiomass <- exp(predict(comblin, newdata = newdatacomb, type="response"))
+    }
+    
+    newdatacomb$FAMILY <- fam
+    
+    newdatause <- rbind(newdatause, newdatacomb)
+    
+    averagecomb <- ddply(fam.use, .(YEAR,FAMILY), summarise,
+                         inopbiomass = gm_mean(inopbiomass))
+    
+    averageuse <- rbind(averageuse, averagecomb)
+    
+    
+  }
+   
+  # construct a figure
+  
+  use.plots[[i]]  <- local({
+    i <- i
+    
+    guse <- ggplot()+
+      geom_line(data = newdatause, aes(x=YEAR, y=inopbiomass, colour = FAMILY), size = 1)+
+      geom_line(data = averageuse, aes(x=YEAR, y=inopbiomass, colour = FAMILY), alpha=0.75)+
+      scale_colour_manual(values = c("blueviolet","darkolivegreen3","darkslategrey"))+
+      scale_y_log10(breaks = c(1000,10000,100000,1000000), labels = comma, limits = c(100,1200000))+
+      labs(y = "Mean annual biomass \nper trap (mg)" , x = "Year")+
+      theme_classic()+
+      theme(axis.text=element_text(size=15),
+            axis.title=element_text(size=15),
+            legend.position = "none",
+            plot.title = element_text(hjust = 0.5, size = 25))+
+      ggtitle(paste0("\n",use))
+    
+    ggsave(paste0("Checked/Figures/FamilyLanduse/",use,".png"), plot = guse, device = 'png',
+           width = 240, height = 160, units = "mm", limitsize = T)
+    
+    print(guse)
+  })
+    
+
+}
+
+
+
+## now we want to turn the list of trap plots into a multiplot
+
+fig.combs <- grid.arrange(grobs = use.plots, nrow = 2)
+
+leg1d <- g_legend(fig1d)
+
+fig.combs.leg <- grid.arrange(fig.combs, leg1d, ncol = 2, widths = c(10,2))
+
+ggsave("Checked/Figures/Fig_combs.svg", plot = fig.combs.leg, device = svg,
+       width = 500, height = 300, units = "mm", limitsize = T)
+
+
+
+
 ### supplement 2
 
 # we want to include a .csv file as the second supplement, which should have one row for every site*year combination
@@ -1948,6 +2401,143 @@ figs2a
 
 ggsave("Checked/Figures/FigS2a.svg", plot = figs2a, device = svg,
        width = 150, height = 60, units = "mm", limitsize = T)
+
+
+
+### inoperative dates analysis
+
+# I'm going to break away briefly to analyse something totally different:
+# the spread of inoperative dates through the year
+# and the spread of the number of inoperative dates per trap/year
+
+# we are assessing these things to see whether there is a serious risk of biasing the results with the current adjustment
+
+inops <- read.csv("../Raw/Callum Macgregor Moths Long Running Sites/Inoperative days Excluding Barnfield.csv", header = T)
+inops.barn <- read.csv("../Raw/Callum Macgregor Moths Long Running Sites/Inoperative days Barnfield.csv", header = T)
+
+inops <- rbind(inops, inops.barn)
+
+summary(inops)
+
+inops$Comb <- as.factor(paste(inops$Trap,inops$Year,sep = "."))
+inops$Count <- 1
+
+# first, inspect the distribution of inoperative days per trap/year
+# (this will also help us to remove the full inoperative years before we get to the second assessment)
+
+inops.trapyears <- ddply(inops, .(Comb,Trap,Year), summarise,
+                         DaysInop = sum(Count))
+
+
+# try to add in the trap-years with no inoperative dates
+
+all.trapyears <- ddply(alltraps, .(YEAR, trap), summarise,
+                       Count = sum(Count))
+
+colnames(all.trapyears) <- c("Year","Trap","TotalCount")
+
+inops.zeroes <- merge(inops.trapyears, all.trapyears, all = T)
+
+
+inops.zeroes$DaysInop[is.na(inops.zeroes$DaysInop)] <- 0
+
+
+# get rid of entirely inoperative years
+inops.zeroes <- inops.zeroes[which(inops.zeroes$DaysInop < 364), ]
+
+# now get rid of first/last years
+
+inops.zeroes$END <- NA
+inops.zeroes$END[1] <- T
+inops.zeroes$END[nrow(inops.zeroes)] <- T
+
+
+for (n in 2:(nrow(inops.zeroes)-1)){
+  inops.zeroes$END[n] <- ifelse(inops.zeroes$Trap[n] == inops.zeroes$Trap[n-1] &
+                                  inops.zeroes$Trap[n] == inops.zeroes$Trap[n+1], 
+                                   F,T)
+}
+
+
+inops.zeroes <- inops.zeroes[which(inops.zeroes$END == F), ]
+
+# now get rid of years with too few days from the interim
+
+inops.zeroes <- inops.zeroes[which(inops.zeroes$DaysInop < 122), ]
+
+# turn absolute days inoperative into a percentage
+inops.zeroes$InopPerc <- ifelse((inops.zeroes$Year/4) == round(inops.zeroes$Year/4),
+                                inops.zeroes$DaysInop*100/366,
+                                inops.zeroes$DaysInop*100/365)
+
+
+summary(inops.zeroes$InopPerc)
+
+# get the median number of inoperative days
+medInop <- median(inops.zeroes$InopPerc)
+
+## finally, plot a histogram showing the number of inoperative days in each year
+
+ginops <- ggplot(inops.zeroes, aes(x = InopPerc))+
+  geom_histogram(binwidth = 1)+
+  geom_vline(aes(xintercept = medInop), linetype="dashed")+
+  xlab("% inoperative days per year")+ ylab("Frequency")+
+  theme_classic()
+
+ginops
+
+
+## now use this to gather the relevant records from the raw inop data
+
+inops.goodtraps <- levels(droplevels(inops.zeroes$Comb))
+
+inops.good <- inops[which(inops$Comb %in% inops.goodtraps), ]
+
+
+inops.days <- ddply(inops.good, .(CalDay), summarise,
+                    Years = sum(Count))
+
+
+summary(inops.days$Years)
+
+
+# now calculate the total possible number of trap-years for each day and calculate a percentage
+
+total.trapyears <- nrow(inops.zeroes)
+
+inops.zeroes$Leap <- ifelse(inops.zeroes$Year/4 == round(inops.zeroes$Year/4), T, F)
+
+leap.trapyears <- as.numeric(as.character(summary(inops.zeroes$Leap)[[3]]))
+
+
+inops.days$Perc <- ifelse(inops.days$CalDay == 366, 
+                          inops.days$Years*100/leap.trapyears,
+                          inops.days$Years*100/total.trapyears)
+
+summary(inops.days$Perc)
+
+# plot the figure
+
+ginopdays <- ggplot(inops.days, aes(x = CalDay, y = Perc))+
+  geom_line(stat = "identity")+
+  xlab("Julian day")+ ylab("% inoperative trap-years")+
+  ylim(c(0,4))+
+  theme_classic()
+
+ginopdays
+
+
+minop <- grid.arrange(ginopdays,ginops, ncol = 1)
+
+ggsave("Checked/Figures/FigInops.svg", plot = minop, device = svg,
+       width = 150, height = 100, units = "mm", limitsize = T)
+
+
+
+days.to.cut <- c(1:7,352:366)
+inops.days.normal <- inops.days[which(!(inops.days$CalDay %in% days.to.cut)), ]
+
+summary(inops.days.normal$Years)
 
 
 

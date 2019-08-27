@@ -172,6 +172,247 @@ siteswcodesna <- na.omit(siteswcodes)
 write.csv(siteswcodes, "Checked/Landuse and climate/siteswithall.csv", row.names = F)
 
 
+## repeat this for the LCM1990 data
+
+# first read in the data again
+lcm1990 <- raster("../Raw/LCM1990/lcm-1990-25m_3062230/lcm1990_25m.tif")
+lcm1990
+
+
+# now, we want to generate a small subset of this data for every site in sites_loc (as it's based on location data, 
+# we still can't quite do all sites)
+
+# we want to extract three things for each point - the exact land use at the point,
+# the small-scale main land use (100 m) and the large-scale main land use (1 km)
+
+raster::extract(lcm1990,xy,buffer = 100,fun=getmode)
+
+## now we are ready to extract this information for each row in sites_all
+
+# seed an output table
+
+landuse90 <- data.frame(n=numeric(),
+                      SITENAME=factor(),
+                      SITENO=numeric(),
+                      point=numeric(),
+                      small=numeric(),
+                      large=numeric())
+
+
+# loop over the data
+
+for(n in 1:nrow(sites_loc)){
+  SITENAME <- sites_loc[n,2]
+  SITENO <- sites_loc[n,1]
+  xy <- cbind(sites_loc[n,10:11])
+  point <- raster::extract(lcm1990, xy) # get a value for the 25m squares
+  small <- raster::extract(lcm1990, xy, buffer = 100, fun = getmode) # picks out the most common value in 100m^2
+  large <- raster::extract(lcm1990, xy, buffer = 1000, fun = getmode) # same for 1000m^2
+  out <- cbind(n,SITENAME,SITENO,point,small,large)
+  landuse90 <- rbind(landuse90,out)
+  
+  if(n == round(n,-1)){
+    print(n)
+  }
+}
+
+
+summary(landuse90)
+# in this case, suburban is the main habitat type at small-scale and arable at large-scale
+# i.e. traps tend to be set near to towns and/or villages
+
+# this takes quite a while to run so let's store this file here
+write.table(landuse90, file = "Checked/Landuse and climate/landuse90.initial.txt", row.names = F)
+landuse90.saved <- read.table("Checked/Landuse and climate/landuse90.initial.txt", header = T)
+
+landuse90.saved$SITENO <- as.factor(landuse90.saved$SITENO)
+summary(landuse90.saved)
+
+# now we want to merge this data on land use back into the main data on sites
+# start by trimming the first column off as it was just record-keeping for the loop
+landuse90 <- landuse90.saved[,-1]
+
+summary(landuse90)
+colnames(landuse90) <- c("SITENAME","SITENO","point90","small90","large90")
+
+# merge the landuse data into the main geolocation data
+sites_loc_lu90 <- merge(sites_loc_lu,landuse90)
+
+# and finally, merge the locationless sites back in
+sites_all_lu90 <- merge(sites_loc_lu90, no_loc, all=T)
+
+
+# Write clean file
+
+write.csv(sites_all_lu90, "Checked/Landuse and climate/sites_landuse90.csv", row.names=F)
+sites_landuse90 <- read.csv("Checked/Landuse and climate/sites_landuse90.csv", header = T)
+
+### before writing this out, we want to do two things:
+# (i) classify all sites (at small scale) into four land-use classes according to each LCM version
+# (ii) note whether each site is consistent between 1990 and 2007 or has changed
+
+# make lists of the relevant categories for each land-use class in each LCM
+grasslandclass <- c(4,5,6,7,8,10,11)
+woodlandclass <- c(1,2)
+arableclass <- 3
+urbanclass <- c(22,23)
+
+grasslandclass90 <- c(5,6,7,8,9,10,11,12,13,19,25)
+woodlandclass90 <- c(14,15,16)
+arableclass90 <- 18
+urbanclass90 <- c(20,21)
+
+
+sites_landuse90$Class2007 <- as.factor(ifelse(sites_landuse90$small %in% grasslandclass, "Grassland",
+                                  ifelse(sites_landuse90$small %in% woodlandclass, "Woodland",
+                                         ifelse(sites_landuse90$small %in% arableclass, "Arable",
+                                                ifelse(sites_landuse90$small %in% urbanclass, "Urban","Other")))))
+
+sites_landuse90$Class1990 <- as.factor(ifelse(sites_landuse90$small90 %in% grasslandclass90, "Grassland",
+                                            ifelse(sites_landuse90$small90 %in% woodlandclass90, "Woodland",
+                                                   ifelse(sites_landuse90$small90 %in% arableclass90, "Arable",
+                                                          ifelse(sites_landuse90$small90 %in% urbanclass90, "Urban","Other")))))
+
+
+
+sites_landuse90$ChangeTest <- ifelse(sites_landuse90$Class2007 == sites_landuse90$Class1990, T, F)
+
+sites_landuse90$ChangeFactor <- as.factor(paste(sites_landuse90$Class1990,sites_landuse90$Class2007, sep = "-"))
+
+
+
+## NEED TO REMOVE THE TRAPS NOT IN THE BRITISH ISLES
+sites_landuse90 <- sites_landuse90[(sites_landuse90$LAT > 49.532822) & (sites_landuse90$LON < 10),]
+
+write.csv(sites_landuse90, "Checked/Landuse and climate/siteswithall.csv", row.names = F)
+
+
+
+### now we repeat all this AGAIN, this time with Dudley Stamp data
+# first read in the data again
+dudley <- raster("../Raw/DudleyStamp/dudley25v8.tif")
+dudley
+
+
+# now, we want to generate a small subset of this data for every site in sites_loc (as it's based on location data, 
+# we still can't quite do all sites)
+
+# we want to extract three things for each point - the exact land use at the point,
+# the small-scale main land use (100 m) and the large-scale main land use (1 km)
+
+raster::extract(dudley,xy,buffer = 100,fun=getmode)
+# this hasn't worked here because we'll need to use lat/long for this raster
+
+## now we are ready to extract this information for each row in sites_all
+
+# seed an output table
+
+landuseds <- data.frame(n=numeric(),
+                        SITENAME=factor(),
+                        SITENO=numeric(),
+                        point=numeric(),
+                        small=numeric(),
+                        large=numeric())
+
+
+# loop over the data
+
+for(n in 1:nrow(sites_loc)){
+  SITENAME <- sites_loc[n,2]
+  SITENO <- sites_loc[n,1]
+  xy <- cbind(sites_loc[n,10:11])
+  point <- raster::extract(dudley, xy) # get a value for the 25m squares
+  small <- raster::extract(dudley, xy, buffer = 100, fun = getmode) # picks out the most common value in 100m^2
+  large <- raster::extract(dudley, xy, buffer = 1000, fun = getmode) # same for 1000m^2
+  out <- cbind(n,SITENAME,SITENO,point,small,large)
+  landuseds <- rbind(landuseds,out)
+  
+  if(n == round(n,-1)){
+    print(n)
+  }
+}
+
+
+summary(landuseds)
+
+# this takes quite a while to run so let's store this file here
+write.table(landuseds, file = "Checked/Landuse and climate/landuseds.initial.txt", row.names = F)
+landuseds.saved <- read.table("Checked/Landuse and climate/landuseds.initial.txt", header = T)
+
+landuseds.saved$SITENO <- as.factor(landuseds.saved$SITENO)
+summary(landuseds.saved)
+
+# now we want to merge this data on land use back into the main data on sites
+# start by trimming the first column off as it was just record-keeping for the loop
+landuseds <- landuseds.saved[,-1]
+
+summary(landuseds)
+colnames(landuseds) <- c("SITENAME","SITENO","pointds","smallds","largeds")
+
+# merge the landuse data into the main geolocation data
+sites_loc_luds <- merge(sites_loc_lu90,landuseds)
+
+# and finally, merge the locationless sites back in
+sites_all_luds <- merge(sites_loc_luds, no_loc, all=T)
+
+
+# Write clean file
+
+write.csv(sites_all_luds, "Checked/Landuse and climate/sites_landuseds.csv", row.names=F)
+sites_landuseds <- read.csv("Checked/Landuse and climate/sites_landuseds.csv", header = T)
+
+### before writing this out, we want to do two things:
+# (i) classify all sites (at small scale) into four land-use classes according to each LCM version
+# (ii) note whether each site is consistent between 1931 and 2007 or has changed
+
+# make lists of the relevant categories for each land-use class in DS
+
+
+grasslandclassds <- 5
+woodlandclassds <- 3
+arableclassds <- 4
+urbanclassds <- c(1,2)
+
+
+sites_landuseds$Class2007 <- as.factor(ifelse(sites_landuseds$small %in% grasslandclass, "Grassland",
+                                              ifelse(sites_landuseds$small %in% woodlandclass, "Woodland",
+                                                     ifelse(sites_landuseds$small %in% arableclass, "Arable",
+                                                            ifelse(sites_landuseds$small %in% urbanclass, "Urban","Other")))))
+
+sites_landuseds$Class1990 <- as.factor(ifelse(sites_landuseds$small90 %in% grasslandclass90, "Grassland",
+                                              ifelse(sites_landuseds$small90 %in% woodlandclass90, "Woodland",
+                                                     ifelse(sites_landuseds$small90 %in% arableclass90, "Arable",
+                                                            ifelse(sites_landuseds$small90 %in% urbanclass90, "Urban","Other")))))
+
+
+
+sites_landuseds$ClassDS <- as.factor(ifelse(sites_landuseds$smallds %in% grasslandclassds, "Grassland",
+                                              ifelse(sites_landuseds$smallds %in% woodlandclassds, "Woodland",
+                                                     ifelse(sites_landuseds$smallds %in% arableclassds, "Arable",
+                                                            ifelse(sites_landuseds$smallds %in% urbanclassds, "Urban","Other")))))
+
+
+
+sites_landuseds$ChangeTestDS <- ifelse(sites_landuseds$Class2007 == sites_landuseds$ClassDS, T, F)
+sites_landuseds$ChangeFactorDS <- as.factor(paste(sites_landuseds$ClassDS,sites_landuseds$Class2007, sep = "-"))
+
+sites_landuseds$ChangeTest90 <- ifelse(sites_landuseds$Class2007 == sites_landuseds$Class1990, T, F)
+sites_landuseds$ChangeFactor90 <- as.factor(paste(sites_landuseds$Class1990,sites_landuseds$Class2007, sep = "-"))
+
+
+
+## NEED TO REMOVE THE TRAPS NOT IN THE BRITISH ISLES
+sites_landuseds <- sites_landuseds[(sites_landuseds$LAT > 49.532822) & (sites_landuseds$LON < 10),]
+
+write.csv(sites_landuseds, "Checked/Landuse and climate/siteswithall.csv", row.names = F)
+
+
+
+
+
+
+
+
 
 ### now we want to go through the same process for temperature and rainfall data
 # at the moment we have this in raw, unprocessed form across 170 files
