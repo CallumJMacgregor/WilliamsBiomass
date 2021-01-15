@@ -18,7 +18,7 @@ map1 <- ggplot2::map_data(map = "world", region = c("UK","Ireland"))
 
 # read in packages
 
-j <- c("tidyr","ggpubr","rstudioapi","plyr","vegan","lme4","ggplot2","RColorBrewer","car","gridExtra","MuMIn","RVAideMemoire","emmeans","reshape2","moments","dplyr","ggmap","grid","egg","segmented","scales","tseries","forecast","psych")
+j <- c("tidyr","ggpubr","rstudioapi","plyr","vegan","lme4","ggplot2","RColorBrewer","car","gridExtra","MuMIn","RVAideMemoire","emmeans","reshape2","moments","dplyr","ggmap","grid","egg","segmented","scales","tseries","forecast","psych","MASS","arm")
 
 new.packages <- j[!(j %in% installed.packages()[,"Package"])]
 if(length(new.packages)) install.packages(new.packages)
@@ -27,7 +27,7 @@ lapply(j, require, character.only = TRUE)
 
 setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
 
-source("CheckResidsFunction.R")
+source("../CheckResidsFunction.R")
 
 ### set up the data that we need
 
@@ -36,7 +36,7 @@ source("CheckResidsFunction.R")
 # we have to do Barnfield (the longest-running trap) separately from the rest
 
 # read in the inoperative days file for barnfield
-inopbarn <- read.csv(paste0("../Raw/Callum Macgregor Moths Long Running Sites/Inoperative days Barnfield.csv"), header = TRUE)
+inopbarn <- read.csv(paste0("../../Raw/Callum Macgregor Moths Long Running Sites/Inoperative days Barnfield.csv"), header = TRUE)
 
 #make sure R reads the 'date' column as dates:
 inopbarn$Date <- as.Date(inopbarn$Date, format = '%d/%m/%Y')
@@ -46,7 +46,7 @@ inopbarn$Date <- as.Date(inopbarn$Date, format = '%d/%m/%Y')
 year.list <- c(1933,1934,1935,1936,1937,1946,1947,1948,1949,1950,1964,1965,1966,1967,1968,1969,1970,
                1971,1972,1973,1974,1975,1976,1977,1978,1979,1980,1981,1982,1983,1984,1985,1986,1987,
                1988,1989,1990,1991,1992,1993,1994,1995,1996,1997,1998,1999,2000,2001,2002,2003,2004,
-               2005,2006,2007,2008,2009,2010,2011,2012,2013,2014,2015,2016,2017)
+               2005,2006,2007,2008,2009,2010,2011,2012,2013,2014,2015,2016,2017,2018,2019)
 year.list
 
 
@@ -59,14 +59,14 @@ trapsinop <- ddply(inopbarn, .(Year,Trap), summarise,
 
 # repeat for the other traps:
 
-inopexbar <- read.csv(paste0("../Raw/Callum Macgregor Moths Long Running Sites/Inoperative days Excluding Barnfield.csv"), header = T) 
+inopexbar <- read.csv(paste0("../../Raw/Callum Macgregor Moths Long Running Sites/Inoperative days Excluding Barnfield.csv"), header = T) 
 
 inopexbar$Date <- as.Date(inopexbar$Date, format = '%d/%m/%Y')
 
 
 # set up a list of traps to loop over
 
-trap.list <- levels(droplevels(inopexbar$Trap))
+trap.list <- levels(droplevels(as.factor(inopexbar$Trap)))
 trap.list
 
 
@@ -79,14 +79,14 @@ trapinop <- ddply(inopexbar, .(Trap,Year), summarise,
 trapsinop <- rbind(trapsinop, trapinop)
 
 
-write.csv(trapsinop, file = paste0("Checked/biomass analysis/all traps inoperative.csv"), row.names = FALSE)
+write.csv(trapsinop, file = paste0("../Checked/biomass analysis/all traps inoperative.csv"), row.names = FALSE)
 
 
 ## now we can adjust the biomass estimates in each year by the number of inoperative days
 # and entirely chuck out any years where the trap was inoperative for > 4 months (i.e. 1/3 of the year)
 
 # read back in the file we've just written (to allow shortcutting later!)
-allinop <- read.csv(paste0("Checked/biomass analysis/all traps inoperative.csv"), header= T)
+allinop <- read.csv(paste0("../Checked/biomass analysis/all traps inoperative.csv"), header= T)
 
 
 # function to check if a number is an integer
@@ -101,13 +101,290 @@ names(allinop)[names(allinop) == 'Trap'] <- 'trap'
 names(allinop)[names(allinop) == 'Year'] <- 'YEAR'
 
 
+### now we need to start working with the real data. 
+# First step is to read it in as a single file and break it up into a separate file per year
+# (this will make it easier to handle)
 
-# now read in the real estimated biomass data (from the bootstrapping) and make the appropriate adjustments
+all.data <- read.csv("../../Raw/Callum Macgregor Moths Long Running Sites/All_days_UK_macros_2020_ddmmyyyy.csv")
+
+all.data$CalDate <- as.Date(all.data$CalDate, format = '%d/%m/%Y')
+all.data$Year <- as.factor(substr(all.data$CalDate,1,4))
+
+summary(all.data)
+
+for (year in year.list){
+  print(year)
+  year.data <- all.data[which(all.data$Year == year), ]
+  
+  write.csv(year.data, paste0("../../Raw/Callum Macgregor Moths Long Running Sites/Updated_by_year/AllSitesAllMoths ",year,".csv"))
+}
+
+
+
+## next step - turn these dataframes, one by one, into one row per individual (rather than one per count),
+# and append estimated body mass info (which we need to read in first)
+
+# read in body mass estimates
+bodymass <- read.csv("FinalBiomassEstimates.csv", header = TRUE)
+
+# read in a file that matches up RIS nomenclature to the Agassiz nom used in Kinsella et al.
+nomen <- read.csv("RIS_names_fixed.csv")
+
+# merge the two together by 'SPECIES', allowing us to later merge in the RIS data by 'binomial'
+bodymass_nomen <- merge(nomen, bodymass)
+
+
+
+### quick sidestep - for other reasons, I need a list of all species in the dataset
+
+all.species <- ddply(all.data, .(Code.RISgeneric, Common.Name, binomial), summarise,
+                     Count = sum(DailyCount))
+
+summary(all.species)
+
+# and I need to test how these merge with the bodymass_nomen frame
+
+mass_RIS <- merge(all.species, bodymass_nomen, all = T)  # all checked and correct
+
+
+
+## now make the individual-level dataframes, merging in this info
+
 
 for (year in year.list){
   print(year)
   
-  yearly <- read.csv(paste0("data transfer for chris and callum/Biomass calculations/EstBiomassyearsbootstrapped/EstBiomass",year,".csv"),header =T)
+  individuals <- data.frame(INDIVIDUAL = numeric(),
+                            BINOMIAL = factor(),
+                            TRAPNAME = factor(),
+                            YEAR = numeric(),
+                            FAMILY = factor(),
+                            DRY_MASS = numeric(),
+                            log_DRY_MASS = numeric(),
+                            SE = numeric(),
+                            COUNT = numeric())
+  
+  data <- read.csv(paste0("../../Raw/Callum Macgregor Moths Long Running Sites/Updated_by_year/AllSitesAllMoths ",year,".csv"),header=T)
+  
+  yearly <- ddply(data, .(Year,TrapName,binomial), summarise,
+                  Count = sum(DailyCount))
+  bodymass_nomen_com <- ddply(bodymass_nomen, .(binomial,FAMILY), summarise,
+                     PRED_DRY_MASS = mean(PRED_DRY_MASS), 
+                     log_DRY_MASS = mean(log_DRY_MASS), 
+                     SE = mean(SE))
+  
+  yearly.mass <- merge(yearly,bodymass_nomen_com)
+  
+  for (n in 1:nrow(yearly.mass)){
+    row <- yearly.mass[n,]
+    no.indivs <- row$Count[[1]]
+    indivs <- data.frame(INDIVIDUAL = numeric(no.indivs))
+    indivs$INDIVIDUAL <- c(1:no.indivs)
+    indivs$BINOMIAL <- row$binomial[[1]]
+    indivs$TRAPNAME <- row$TrapName[[1]]
+    indivs$YEAR <- row$Year[[1]]
+    indivs$RIS_SPECIES <- row$RIS_SPECIES[[1]]
+    indivs$FAMILY <- row$FAMILY[[1]]
+    indivs$NAME <- row$NAME[[1]]
+    indivs$FOREWING_LB <- row$FOREWING_LB[[1]]
+    indivs$FOREWING_MED <- row$FOREWING_MED[[1]]
+    indivs$FOREWING_UB <- row$FOREWING_UB[[1]]
+    indivs$DRY_MASS <- row$DRY_MASS[[1]]
+    indivs$log_DRY_MASS <- row$log_DRY_MASS[[1]]
+    indivs$SE <- row$SE[[1]]
+    indivs$COUNT <- 1
+    
+    individuals <- rbind(individuals, indivs)
+  }
+  write.csv(individuals,file = paste0("Individuals/individuals",year,".csv"), row.names = F)
+}
+
+
+### now use this to bootstrap the estimated biomass per site-year
+
+# Lets also add the trap running durations to each file
+model2 <- read.csv("../data transfer for chris and callum/Years of operation/Model 2/model2.csv", header=T)
+mod2 <- model2[,c(2,23,24)]
+
+
+#GOING TO RUN THE LOOP FOR 5 ESTIMATE ITERATIONS SO I CAN GET ON WITH SOME ACTUAL ANALYSIS
+for (year in year.list){
+  print(year)
+  
+  
+  yearly.biomass <- data.frame(YEAR = numeric(),
+                               trap = factor(),
+                               EST.BIOMASS = numeric(),
+                               EST.BIOMASS.SE = numeric())
+  trapsyearly.biomass <- data.frame(YEAR = numeric(),
+                                    trap = factor(),
+                                    EST.BIOMASS = numeric(),
+                                    EST.BIOMASS.SE = numeric())
+  
+  #Extract each years individuals
+  year.indivs <- read.csv(paste0("Individuals/individuals",year,".csv"), header=T)
+  
+  tryCatch({
+    revalue(year.indivs$TRAPNAME, c("Brooms' Barn L" = "Brooms Barn")) -> year.indivs$TRAPNAME
+  })
+  
+  # now generate 1000 independent estimates of the yearly biomass - each based on separate estimates of each moth's body mass
+  
+  traps.list <- levels(droplevels(as.factor(year.indivs$TRAPNAME)))
+  
+  for (trap in traps.list){
+    trap.indivs <- year.indivs[which(year.indivs$TRAPNAME == trap), ]
+    print(trap)
+    trap.biomass <- NULL  # seed an output vector
+    for (x in 1:1000){
+      
+      if(round(x, -2) == x){
+        print(x)
+      }
+      
+      
+      for (n in 1:nrow(trap.indivs)){
+        trap.indivs$PRED_DRY_MASS[n] <- exp(rnorm(1, mean = trap.indivs$log_DRY_MASS[n], sd = trap.indivs$SE[n]))
+      }
+      
+      biomass.estimate <- sum(trap.indivs$PRED_DRY_MASS) #(this totals the estimates of all of the moths of the year)
+      trap.biomass <- append(trap.biomass, biomass.estimate)
+    }
+    # now take the mean and standard error of those estimates
+    
+    EST.BIOMASS <- mean(trap.biomass)
+    EST.BIOMASS.SE <- sd(trap.biomass)/sqrt(length(trap.biomass))
+    YEAR <- year
+    out <- data.frame(YEAR,trap,EST.BIOMASS,EST.BIOMASS.SE)
+    trapsyearly.biomass <- rbind(trapsyearly.biomass, out)
+    
+    
+  }  
+  yearly.biomass <- rbind(yearly.biomass, trapsyearly.biomass)
+  
+  write.csv(yearly.biomass, file= paste0("EstBiomass/EstBiomass",year,".csv"),row.names = F)
+  
+}
+
+
+
+### now repeat this, grouped by species
+
+
+
+## WE READ IN THE 'INDIVIDUAL' FILES AND COMPRESS THEM TO HAVE ONE ROW PER YEAR, PER TRAP, PER SPECIES
+
+for (year in year.list){
+  print(year)
+  
+  individuals <- read.csv(file = paste0("Individuals/individuals",year,".csv"), header = T)
+  
+  trap.list <- levels(droplevels(as.factor(individuals$TRAPNAME)))
+  
+  yearly <- data.frame(FAMILY = factor(),
+                       BINOMIAL = factor(),
+                       TRAPNAME = factor(),
+                       DRY_MASS = numeric(),
+                       countsum = numeric(),
+                       YEAR = numeric())
+  
+  for (trap in trap.list){
+    
+    print(trap)
+
+    inditrap <- individuals[which(individuals$TRAPNAME == trap),]
+    
+    familygroup <- ddply(inditrap, .(FAMILY,BINOMIAL, TRAPNAME), summarise,
+                         DRY_MASS = sum(exp(log_DRY_MASS)), countsum = sum(COUNT))
+    
+    
+    familygroup$YEAR <- year
+    
+    yearly <- rbind(yearly,familygroup)
+  }
+  
+  write.csv(yearly, file = paste0("Species/species",year,".csv"), row.names=F)
+  
+}
+
+
+## as an addendum, let's calculate the abundance of all moths in each year
+
+abundance <- data.frame(Year = numeric(),
+                        Count = numeric())
+
+for (year in year.list){
+  print(year)
+  
+  individuals <- data.frame(INDIVIDUAL = numeric(),
+                            BINOMIAL = factor(),
+                            TRAPNAME = factor(),
+                            YEAR = numeric(),
+                            FAMILY = factor(),
+                            DRY_MASS = numeric(),
+                            log_DRY_MASS = numeric(),
+                            SE = numeric(),
+                            COUNT = numeric())
+  
+  data <- read.csv(paste0("Individuals/individuals",year,".csv"), header=T)
+  data$Year <- year
+  
+  yearly <- ddply(data, .(YEAR), summarise,
+                  Count = sum(COUNT))
+
+  trapwise <- ddply(data, .(YEAR,TRAPNAME), summarise,
+                    Count = sum(COUNT))
+  
+  yearly$Traps <- nrow(trapwise)
+  
+  abundance <- rbind(abundance,yearly)
+  
+}
+
+write.csv(abundance, "YearlyAbundance.csv", row.names = F)
+
+
+
+summary(mod2)
+
+# we're having merge issues because of the dodgy formatting in the RIS data
+# we need to try and find the off-key character and replace it (argh)
+# I know that it's there as the 'space' in Geescroft I in the main dataset
+
+dodgy <- trapwise[14,2]
+dodgy
+
+if("Geescroft I" == dodgy){ print("Fixed!") } else { print("Still dodgy!") }
+
+dodgy.char <- substr(dodgy,10,10)
+dodgy.char
+
+
+if(grepl(dodgy.char, "Geescroft I", fixed = T)){ print("It's a space")}
+if(grepl(dodgy.char, dodgy, fixed = T)) {print("It's... what, then?")}
+
+
+## we seem to have a second dodgy character issue, this time in Brooms' Barn L
+dodgy2 <- trapwise[9,2]
+dodgy2
+
+if("Brooms' Barn L" == dodgy2){ print("Fixed!") } else { print("Still dodgy!") }
+
+
+
+
+# so, we've isolated the dodgy character -
+# next time we loop through all the dataframes, let's find-and-replace it for a bog-standard space, if poss
+
+
+
+##### now read back in the estimated biomass data (from the bootstrapping) and make the appropriate adjustments
+
+for (year in year.list){
+  print(year)
+  
+  yearly <- read.csv(paste0("EstBiomass/EstBiomass",year,".csv"),header =T)
+  
   
   newyear <- merge(yearly,allinop, by= c("YEAR", "trap"), all.x = TRUE, all.y=FALSE)
   newyear$prop[is.na(newyear$prop)] <- 1 # remove the NAs for the traps that had no inoperative days but still be able to multiply the biomass by the 'prop' which is now 1
@@ -117,12 +394,20 @@ for (year in year.list){
   newyear$inopbiomass <- newyear$EST.BIOMASS*newyear$prop
   newyear$inopSE <- newyear$EST.BIOMASS.SE*(newyear$prop^2)
   
-  write.csv(newyear, file= paste0("Checked/biomass analysis/estimated biomassinop/EstBiomassinop",year,".csv"),row.names = FALSE)
+  newyear$trap <- gsub(dodgy.char, " ", newyear$trap)
+  
+  write.csv(newyear, file= paste0("EstBiomassAdj/EstBiomassAdj",year,".csv"),row.names = FALSE)
   
 }
 
 
+
 ## read in the final data for traps that have run for 30+ years
+
+
+traps30 <- mod2[which(mod2$LongestDuration >= 30), ]
+
+traps30.list <- levels(droplevels(as.factor(traps30$TrapName)))
 
 
 alltraps <- data.frame(trap = factor(),
@@ -138,19 +423,17 @@ alltraps <- data.frame(trap = factor(),
                         inopSE = numeric())
 
 
-
-year.list <- c(1933,1934,1935,1936,1937,1946,1947,1948,1949,1950,1964,1965,1966,1967,1968,1969,1970,
-               1971,1972,1973,1974,1975,1976,1977,1978,1979,1980,1981,1982,1983,1984,1985,1986,1987,
-               1988,1989,1990,1991,1992,1993,1994,1995,1996,1997,1998,1999,2000,2001,2002,2003,2004,
-               2005,2006,2007,2008,2009,2010,2011,2012,2013,2014,2015,2016,2017)
-year.list
-
 for (year in year.list){
   print(year)
   
-  years <- read.csv(paste0("Checked/biomass analysis/estimated biomassinop/EstBiomassinop",year,".csv"),header = T)
+  years <- read.csv(paste0("EstBiomassAdj/EstBiomassAdj",year,".csv"),header = T)
   
-  trap.thirty <- years[which(years$LongestDuration >= 30), ]
+  tryCatch({
+    revalue(years$trap, c("Brooms' Barn L" = "Brooms Barn")) -> years$trap
+  })
+  
+  
+  trap.thirty <- years[which(years$trap %in% traps30.list), ]
   
   
   alltraps <- rbind(alltraps,trap.thirty)
@@ -158,13 +441,17 @@ for (year in year.list){
 
 # update the trap list to only the long-running ones
 
-trap.list <- levels(droplevels(alltraps$trap))
+trap.list <- levels(droplevels(as.factor(alltraps$trap)))
 trap.list
 
 
 # let's get rid of the first and last years of each trap's run, and also get rid of any other years with too many inoperative days
+# and first get rid of data from 2018-19 (which was not in our original analysis anyway)
+# since it doesn't appear to be fully up-to-date (e.g. only two moths caught all year at Barnfield!?!)
 
 alltraps.end <- alltraps[0,]
+
+alltraps <- alltraps[which(alltraps$YEAR < 2018), ]
 
 
 for (trap in trap.list){
@@ -193,12 +480,20 @@ alltraps.no0 <- subset(alltraps.noend, inopbiomass > 0)
 
 
 # get rid of the "Malham Tarn" site - although it's a 50+, it has a gap of fully 10 years
-# which also bridges the candidate inflection point
+# which also bridges a candidate inflection point
 alltraps.no0 <- alltraps.no0[which(alltraps.no0$trap != "Malham Tarn"), ]
 
 
-# and also get rid of the earliest years of the Barnfield site, since this is the only trap running during this period
+# and also get rid of the earliest years of the Barnfield and Geescroft sites, since this is the only trap running during this period
 alltraps.no0 <- alltraps.no0[which(alltraps.no0$YEAR > 1966), ]
+
+
+# and in this revised dataset, we have an extra hanging year at Beinn Eighe I in 2017 which also doesn't fit the bill
+alltraps.no0$test <- ifelse(alltraps.no0$trap == "Beinn Eighe I" & alltraps.no0$YEAR == 2017, T, F)
+alltraps.no0 <- alltraps.no0[which(alltraps.no0$test == F), ]
+
+
+summary(alltraps.no0)
 
 
 # for 1b and 1c
@@ -228,15 +523,21 @@ good.data <- levels(droplevels(alltraps.no0$siteXyear))
 for (year in year.list){
   print(year)
   
-  family <- read.csv(file = paste0("Checked/biomass analysis/Biomass grouped by species/species",year,".csv"), header=T)
+  family <- read.csv(file = paste0("Species/species",year,".csv"), header=T)
+  
+  family$TRAPNAME <- gsub(dodgy.char, " ", family$TRAPNAME)
+  
   revalue(family$TRAPNAME, c("Brooms' Barn L" = "Brooms Barn")) -> family$TRAPNAME
-  inop <- read.csv(file = paste0("Checked/biomass analysis/estimated biomassinop/EstBiomassinop",year,".csv"),header = T)
+  inop <- read.csv(file = paste0("EstBiomassAdj/EstBiomassAdj",year,".csv"),header = T)
   inop$EST.BIOMASS <- NULL
   inop$EST.BIOMASS.SE <- NULL
   inop$Count <- NULL
   inop$inopbiomass <- NULL
   inop$inopSE <- NULL
   
+  inop$trap <- gsub(dodgy.char, " ", inop$trap)
+  
+  revalue(inop$trap, c("Brooms' Barn L" = "Brooms Barn")) -> inop$trap
   
   
   family.inop <- merge(family, inop, by.x = "TRAPNAME", by.y= "trap")
@@ -259,7 +560,7 @@ for (year in year.list){
   # remove any rows with zero biomass
   family.inop.no0 <- subset(family.inop.good, inopbiomass >0)
   
-  write.csv(family.inop.no0, file = paste0("Checked/biomass analysis/biomass grouped by species inop/speciesinopbiomass",year,".csv"), row.names = F)
+  write.csv(family.inop.no0, file = paste0("SpeciesAdj/SpeciesAdj",year,".csv"), row.names = F)
   
 }
 
@@ -274,18 +575,15 @@ fams <- data.frame(FAMILY = factor(),
                    inopabund = numeric())
 
 
-yearlist64 <- c(1964, 1965,1966,1967,1968,1969,1970,
-                1971,1972,1973,1974,1975,1976,1977,1978,1979,1980,1981,1982,1983,1984,1985,1986,1987,
-                1988,1989,1990,1991,1992,1993,1994,1995,1996,1997,1998,1999,2000,2001,2002,2003,2004,
-                2005,2006,2007,2008,2009,2010,2011,2012,2013,2014,2015,2016,2017)
+yearlist64 <- c(1964:2017)
 
 for (year in yearlist64){ 
   print(year)
   
-  years <- read.csv(paste0("Checked/biomass analysis/biomass grouped by species inop/speciesinopbiomass",year,".csv"),header = T)
+  years <- read.csv(paste0("SpeciesAdj/SpeciesAdj",year,".csv"),header = T)
   
   
-  compressed <- ddply(years, .(FAMILY, YEAR, TRAPNAME, LongestDuration), summarise,
+  compressed <- ddply(years, .(FAMILY, YEAR, TRAPNAME), summarise,
                       inopbiomass = sum(inopbiomass), inopabund = sum(inopabund)) # here we are abandoning the standard error
   
   
@@ -306,7 +604,7 @@ fams.sum$perc <- (fams.sum$totalbiomass*100)/allbiomass
 fams.sum
 
 # let's do the top 3 families: Noctuidae, Geometridae and Erebidae
-# which collectively represent 93.33 % of all trapped biomass
+# which collectively represent 90.7 % of all trapped biomass
 
 fams.noct <- fams[which(fams$FAMILY == "Noctuidae"), ]
 fams.geom <- fams[which(fams$FAMILY == "Geometridae"), ]
@@ -318,7 +616,7 @@ fams.ereb <- fams[which(fams$FAMILY == "Erebidae"), ]
 ## we now need to introduce land-use data for each trap
 
 # read in this data which has been prepared elsewhere, and cut out the few columns we actually need
-landuse <- read.csv("Checked/Landuse and climate/siteswithall.csv", header = TRUE)
+landuse <- read.csv("../Checked/Landuse and climate/siteswithall.csv", header = TRUE)
 
 summary(landuse)
 
@@ -330,8 +628,14 @@ colnames(landuse.trim) <- c('trap','LAT','LON','EASTING','NORTHING','HEast','HNo
                             'small90','smallds','Class2007','Class1990','ClassDS',
                             'ChangeTest90','ChangeTestDS','ChangeFactor90','ChangeFactorDS')
 
+# there are duplicated rows in here: let's try and remove
+duplicated(landuse.trim)
+
+landuse.unique <- unique(landuse.trim)
+
+
 # now merge this land-use data into the main dataset
-all.landuse <- merge(landuse.trim, alltraps.no0)
+all.landuse <- merge(landuse.unique, alltraps.no0)
 
 
 ## now we use those landuse categories to pick out traps in four main landuse types that collectively represent most sites in the dataset:
@@ -369,9 +673,12 @@ same.small.DS <- all.landuse[which(all.landuse$ChangeTestDS == T), ]
 
 landuse.change <- ddply(all.landuse, .(trap,ChangeFactorDS,ChangeTestDS,ChangeFactor90,ChangeTest90), summarise,
                         Count = sum(Count))
-summary(landuse.change)
+landuse.change
 
-write.csv(landuse.change, "Checked/Landuse and climate/FinalSites.csv", row.names = F)
+write.csv(landuse.change, "../Checked/Landuse and climate/FinalSites.csv", row.names = F)
+
+
+
 
 #### now do the analyses and accompanying figure panels for Fig 1 - raw biomass
 
@@ -456,8 +763,8 @@ chkres(model1a.seg, alltraps.no0$trap, alltraps.no0$YEAR)
 ## finally, construct a figure
 
 
-newdataall <- expand.grid(YEAR = alltraps.no0$YEAR, trap = levels(droplevels(alltraps.no0$trap)), inopbiomass = 0)
-newdataall$inopbiomass <- exp(predict(model1a.seg, newdata = newdataall, type="response"))
+newdataall <- expand.grid(YEAR = alltraps.no0$YEAR, trap = levels(droplevels(as.factor(alltraps.no0$trap))), inopbiomass = 0)
+newdataall$inopbiomass <- exp(predict(model1aG, newdata = newdataall, type="response"))
 newdataall <- ddply(newdataall, .(YEAR), numcolwise(mean))
 
 
@@ -475,16 +782,17 @@ fig1a <- ggplot(alltraps.no0, aes(x = YEAR, y = inopbiomass))+
   geom_line(data=newdataall, aes(x=YEAR, y=inopbiomass)) +
   geom_line(data = averageall, aes(x= YEAR, y = inopbiomass), size= 0.75)+
   scale_y_log10(breaks = c(1000,10000,100000, 1000000), labels = comma, limits = c(200,1200000)) +
-  labs(y = "Total annual \nbiomass (mg)" , x = "Year") +
+  labs(y = "Total annual \nbiomass (mg)" , x = "Year", tag = "a") +
   theme_classic()+
   theme(axis.text=element_text(size=15),
         axis.title=element_text(size=15),
+        plot.tag=element_text(size=30),
         legend.position = "none")
 
 fig1a
 
 
-ggsave("Checked/Figures/Panels/Fig1a.svg", plot = fig1a, device = svg,
+ggsave("Figures/Panels/Fig1a.svg", plot = fig1a, device = svg,
        width = 240, height = 160, units = "mm", limitsize = T)
 
 
@@ -503,8 +811,8 @@ traps.starts <- ddply(traps.years, .(trap), summarise,
 
 traps.starts <- traps.starts[order(traps.starts$start), ]
 
-
-trap.list <- levels(droplevels(traps.starts$trap))
+trap.list <- traps.starts$trap
+trap.list
 
 
 trap.stats <- data.frame()
@@ -529,12 +837,12 @@ for (trap in trap.list){
     i <- i
     
   if("try-error" %in% class(trapseg)){
-    trap.early <- nrow(trapdat[which(trapdat$YEAR <= 1982), ])
-    trap.late <- nrow(trapdat[which(trapdat$YEAR > 1982), ])
+    trap.early <- nrow(trapdat[which(trapdat$YEAR <= 1976), ])
+    trap.late <- nrow(trapdat[which(trapdat$YEAR > 1976), ])
     
     
     gtrap <- ggplot(trapdat, aes(x = YEAR, y = inopbiomass))+
-      geom_vline(aes(xintercept = 1982.079),
+      geom_vline(aes(xintercept = 1976),
                  linetype = "dashed",
                  colour = "grey50")+
       geom_line(size= 0.75)+
@@ -542,7 +850,7 @@ for (trap in trap.list){
       labs(y = "Total annual \nbiomass (mg)" , x = "Year") +
       theme_classic()+
       xlim(c(1967,2017))+
-      annotate(geom = "text", x = 1974, y = 500, size = 8, 
+      annotate(geom = "text", x = 1970, y = 500, size = 8, 
                label = paste0("n = ",trap.early))+
       annotate(geom = "text", x = 1990, y = 500, size = 8, 
                label = paste0("n = ",trap.late))+
@@ -562,7 +870,7 @@ for (trap in trap.list){
     gtrap <- gtrap + geom_line(data=newdatatrap, aes(x=YEAR, y=inopbiomass))
     
     
-    ggsave(paste0("Checked/Figures/IndividualSites/",trap,".png"), plot = gtrap, device = 'png',
+    ggsave(paste0("Figures/IndividualSites/",trap,".png"), plot = gtrap, device = 'png',
            width = 240, height = 160, units = "mm", limitsize = T)
     
     
@@ -583,19 +891,22 @@ for (trap in trap.list){
   BIC_trapseg <- BIC(trapseg)
   
   
-  trap.early <- nrow(trapdat[which(trapdat$YEAR <= 1982), ])
-  trap.late <- nrow(trapdat[which(trapdat$YEAR > 1982), ])
+  trap.early <- nrow(trapdat[which(trapdat$YEAR <= 1976), ])
+  trap.late <- nrow(trapdat[which(trapdat$YEAR > 1976), ])
   
   
 
 
   
-  if (BIC_traplin < BIC_trapseg){
+  if (BIC_traplin <= BIC_trapseg){
+    if (BIC_traplin == BIC_trapseg){
+      BIC_trapseg <- NA  
+    }
     newdatatrap <- expand.grid(YEAR = trapdat$YEAR, inopbiomass = 0)
     newdatatrap$inopbiomass <- exp(predict(traplin, newdata = newdatatrap, type="response"))
     
     gtrap <- ggplot(trapdat, aes(x = YEAR, y = inopbiomass))+
-      geom_vline(aes(xintercept = 1982.079),
+      geom_vline(aes(xintercept = 1976),
                  linetype = "dashed",
                  colour = "grey50")+
       geom_line(size= 0.75)+
@@ -603,7 +914,7 @@ for (trap in trap.list){
       labs(y = "Total annual \nbiomass (mg)" , x = "Year") +
       theme_classic()+
       xlim(c(1967,2017))+
-      annotate(geom = "text", x = 1974, y = 500, size = 8, 
+      annotate(geom = "text", x = 1970, y = 500, size = 8, 
                label = paste0("n = ",trap.early))+
       annotate(geom = "text", x = 1990, y = 500, size = 8, 
                label = paste0("n = ",trap.late))+
@@ -627,7 +938,7 @@ for (trap in trap.list){
     
   }
   
-  if (BIC_traplin > BIC_trapseg){
+  else if (BIC_traplin > BIC_trapseg){
     newdatatrap <- expand.grid(YEAR = trapdat$YEAR, inopbiomass = 0)
     newdatatrap$inopbiomass <- exp(predict(trapseg, newdata = newdatatrap, type="response"))
     
@@ -638,7 +949,7 @@ for (trap in trap.list){
     trap.UCI <- break.est + (1.96*break.se)
     
     gtrap <- ggplot(trapdat, aes(x = YEAR, y = inopbiomass))+
-      geom_vline(aes(xintercept = 1982.079),
+      geom_vline(aes(xintercept = 1976),
                  linetype = "dashed",
                  colour = "grey50")+
       geom_line(size= 0.75)+
@@ -646,7 +957,7 @@ for (trap in trap.list){
       labs(y = "Total annual \nbiomass (mg)" , x = "Year") +
       theme_classic()+
       xlim(c(1967,2017))+
-      annotate(geom = "text", x = 1974, y = 500, size = 8, 
+      annotate(geom = "text", x = 1970, y = 500, size = 8, 
                label = paste0("n = ",trap.early))+
       annotate(geom = "text", x = 1990, y = 500, size = 8, 
                label = paste0("n = ",trap.late))+
@@ -671,7 +982,7 @@ for (trap in trap.list){
   
   }
   
-    ggsave(paste0("Checked/Figures/IndividualSites/",trap,".png"), plot = gtrap, device = 'png',
+    ggsave(paste0("Figures/IndividualSites/",trap,".png"), plot = gtrap, device = 'png',
            width = 240, height = 160, units = "mm", limitsize = T)
   }
   
@@ -691,7 +1002,7 @@ for (trap in trap.list){
 
 fig.traps <- grid.arrange(grobs = trap.plots, nrow = 9)
 
-ggsave("Checked/Figures/Fig_traps.svg", plot = fig.traps, device = svg,
+ggsave("Figures/Fig_traps.svg", plot = fig.traps, device = svg,
        width = 700, height = 1200, units = "mm", limitsize = T)
 
 ## we have to repeat the same loop with slight tweaks to actually extract the trap stats
@@ -715,12 +1026,12 @@ for (trap in trap.list){
 
     
     if("try-error" %in% class(trapseg)){
-      trap.early <- nrow(trapdat[which(trapdat$YEAR <= 1982), ])
-      trap.late <- nrow(trapdat[which(trapdat$YEAR > 1982), ])
+      trap.early <- nrow(trapdat[which(trapdat$YEAR <= 1976), ])
+      trap.late <- nrow(trapdat[which(trapdat$YEAR > 1976), ])
       
       
       gtrap <- ggplot(trapdat, aes(x = YEAR, y = inopbiomass))+
-        geom_vline(aes(xintercept = 1982.079),
+        geom_vline(aes(xintercept = 1976),
                    linetype = "dashed",
                    colour = "grey50")+
         geom_line(size= 0.75)+
@@ -728,7 +1039,7 @@ for (trap in trap.list){
         labs(y = "Total annual \nbiomass (mg)" , x = "Year") +
         theme_classic()+
         xlim(c(1967,2017))+
-        annotate(geom = "text", x = 1974, y = 500, size = 8, 
+        annotate(geom = "text", x = 1970, y = 500, size = 8, 
                  label = paste0("n = ",trap.early))+
         annotate(geom = "text", x = 1990, y = 500, size = 8, 
                  label = paste0("n = ",trap.late))+
@@ -748,7 +1059,7 @@ for (trap in trap.list){
       gtrap <- gtrap + geom_line(data=newdatatrap, aes(x=YEAR, y=inopbiomass))
       
       
-      ggsave(paste0("Checked/Figures/IndividualSites/",trap,".png"), plot = gtrap, device = 'png',
+      ggsave(paste0("Figures/IndividualSites/",trap,".png"), plot = gtrap, device = 'png',
              width = 240, height = 160, units = "mm", limitsize = T)
       
       
@@ -769,19 +1080,22 @@ for (trap in trap.list){
       BIC_trapseg <- BIC(trapseg)
       
       
-      trap.early <- nrow(trapdat[which(trapdat$YEAR <= 1982), ])
-      trap.late <- nrow(trapdat[which(trapdat$YEAR > 1982), ])
+      trap.early <- nrow(trapdat[which(trapdat$YEAR <= 1976), ])
+      trap.late <- nrow(trapdat[which(trapdat$YEAR > 1976), ])
       
       
       
       
-      
-      if (BIC_traplin < BIC_trapseg){
+      if (BIC_traplin <= BIC_trapseg){
+        if (BIC_traplin == BIC_trapseg){
+        BIC_trapseg <- NA  
+        }
+        
         newdatatrap <- expand.grid(YEAR = trapdat$YEAR, inopbiomass = 0)
         newdatatrap$inopbiomass <- exp(predict(traplin, newdata = newdatatrap, type="response"))
         
         gtrap <- ggplot(trapdat, aes(x = YEAR, y = inopbiomass))+
-          geom_vline(aes(xintercept = 1982.079),
+          geom_vline(aes(xintercept = 1976),
                      linetype = "dashed",
                      colour = "grey50")+
           geom_line(size= 0.75)+
@@ -789,7 +1103,7 @@ for (trap in trap.list){
           labs(y = "Total annual \nbiomass (mg)" , x = "Year") +
           theme_classic()+
           xlim(c(1967,2017))+
-          annotate(geom = "text", x = 1974, y = 500, size = 8, 
+          annotate(geom = "text", x = 1970, y = 500, size = 8, 
                    label = paste0("n = ",trap.early))+
           annotate(geom = "text", x = 1990, y = 500, size = 8, 
                    label = paste0("n = ",trap.late))+
@@ -813,7 +1127,7 @@ for (trap in trap.list){
         
       }
       
-      if (BIC_traplin > BIC_trapseg){
+      else if (BIC_traplin > BIC_trapseg){
         newdatatrap <- expand.grid(YEAR = trapdat$YEAR, inopbiomass = 0)
         newdatatrap$inopbiomass <- exp(predict(trapseg, newdata = newdatatrap, type="response"))
         
@@ -824,7 +1138,7 @@ for (trap in trap.list){
         trap.UCI <- break.est + (1.96*break.se)
         
         gtrap <- ggplot(trapdat, aes(x = YEAR, y = inopbiomass))+
-          geom_vline(aes(xintercept = 1982.079),
+          geom_vline(aes(xintercept = 1976),
                      linetype = "dashed",
                      colour = "grey50")+
           geom_line(size= 0.75)+
@@ -832,7 +1146,7 @@ for (trap in trap.list){
           labs(y = "Total annual \nbiomass (mg)" , x = "Year") +
           theme_classic()+
           xlim(c(1967,2017))+
-          annotate(geom = "text", x = 1974, y = 500, size = 8, 
+          annotate(geom = "text", x = 1970, y = 500, size = 8, 
                    label = paste0("n = ",trap.early))+
           annotate(geom = "text", x = 1990, y = 500, size = 8, 
                    label = paste0("n = ",trap.late))+
@@ -857,7 +1171,7 @@ for (trap in trap.list){
         
       }
       
-      ggsave(paste0("Checked/Figures/IndividualSites/",trap,".png"), plot = gtrap, device = 'png',
+      ggsave(paste0("Figures/IndividualSites/",trap,".png"), plot = gtrap, device = 'png',
              width = 240, height = 160, units = "mm", limitsize = T)
     }
     
@@ -875,8 +1189,8 @@ for (trap in trap.list){
 # we also want to split the data here according to the universal break point
 # and independently test the slopes using a mixed-effects model
 
-all.early <- alltraps.no0[which(alltraps.no0$YEAR <= 1982), ]
-all.late <- alltraps.no0[which(alltraps.no0$YEAR > 1982), ]
+all.early <- alltraps.no0[which(alltraps.no0$YEAR <= 1976), ]
+all.late <- alltraps.no0[which(alltraps.no0$YEAR > 1976), ]
 
 
 ## early
@@ -961,8 +1275,8 @@ chkres(model1b.seg, fifty$trap, fifty$YEAR)
 ## finally, construct a figure
 
 
-newdata50 <- expand.grid(YEAR = fifty$YEAR, trap = levels(droplevels(fifty$trap)), inopbiomass = 0)
-newdata50$inopbiomass <- exp(predict(model1b.seg, newdata = newdata50, type="response"))
+newdata50 <- expand.grid(YEAR = fifty$YEAR, trap = levels(droplevels(as.factor(fifty$trap))), inopbiomass = 0)
+newdata50$inopbiomass <- exp(predict(model1bG, newdata = newdata50, type="response"))
 newdata50 <- ddply(newdata50, .(YEAR), numcolwise(mean))
 
 average50 <- ddply(fifty,.(YEAR), summarise,
@@ -984,7 +1298,7 @@ fig1b <- ggplot(fifty, aes(x = YEAR, y = inopbiomass))+
 fig1b
 
 
-ggsave("Checked/Figures/Panels/Fig1b.svg", plot = fig1b, device = svg,
+ggsave("Figures/Panels/Fig1b.svg", plot = fig1b, device = svg,
        width = 240, height = 160, units = "mm", limitsize = T)
 
 
@@ -1031,8 +1345,8 @@ chkres(model1c.seg, thirty$trap, thirty$YEAR)
 ## finally, construct a figure
 
 
-newdata30 <- expand.grid(YEAR = thirty$YEAR, trap = levels(droplevels(thirty$trap)), inopbiomass = 0)
-newdata30$inopbiomass <- exp(predict(model1c.seg, newdata = newdata30, type="response"))
+newdata30 <- expand.grid(YEAR = thirty$YEAR, trap = levels(droplevels(as.factor(thirty$trap))), inopbiomass = 0)
+newdata30$inopbiomass <- exp(predict(model1cG, newdata = newdata30, type="response"))
 newdata30 <- ddply(newdata30, .(YEAR), numcolwise(mean))
 
 average30 <- ddply(thirty,.(YEAR), summarise,
@@ -1053,7 +1367,7 @@ fig1c <- ggplot(thirty, aes(x = YEAR, y = inopbiomass))+
 
 fig1c
 
-ggsave("Checked/Figures/Panels/Fig1c.svg", plot = fig1c, device = svg,
+ggsave("Figures/Panels/Fig1c.svg", plot = fig1c, device = svg,
        width = 240, height = 160, units = "mm", limitsize = T)
 
 
@@ -1104,7 +1418,7 @@ chkres(model1dn.seg, fams.noct$TRAPNAME, fams.noct$YEAR)
 
 # set up the data for a figure
 
-newdatadn <- expand.grid(YEAR = fams.noct$YEAR, TRAPNAME = levels(droplevels(fams.noct$TRAPNAME)), inopbiomass = 0)
+newdatadn <- expand.grid(YEAR = fams.noct$YEAR, TRAPNAME = levels(droplevels(as.factor(fams.noct$TRAPNAME))), inopbiomass = 0)
 newdatadn$inopbiomass <- exp(predict(model1dn.seg, newdata = newdatadn, type="response"))
 newdatadn <- ddply(newdatadn, .(YEAR), numcolwise(mean))
 
@@ -1150,8 +1464,8 @@ chkres(model1dg.seg, fams.geom$TRAPNAME, fams.geom$YEAR)
 
 # set up the data for a figure
 
-newdatadg <- expand.grid(YEAR = fams.geom$YEAR, TRAPNAME = levels(droplevels(fams.geom$TRAPNAME)), inopbiomass = 0)
-newdatadg$inopbiomass <- exp(predict(model1dg.seg, newdata = newdatadg, type="response"))
+newdatadg <- expand.grid(YEAR = fams.geom$YEAR, TRAPNAME = levels(droplevels(as.factor(fams.geom$TRAPNAME))), inopbiomass = 0)
+newdatadg$inopbiomass <- exp(predict(model1dgG, newdata = newdatadg, type="response"))
 newdatadg <- ddply(newdatadg, .(YEAR), numcolwise(mean))
 
 averagedg <- ddply(fams.geom,.(YEAR), summarise,
@@ -1194,8 +1508,8 @@ chkres(model1de.seg, fams.ereb$TRAPNAME, fams.ereb$YEAR)
 
 # set up the data for a figure
 
-newdatade <- expand.grid(YEAR = fams.ereb$YEAR, TRAPNAME = levels(droplevels(fams.ereb$TRAPNAME)), inopbiomass = 0)
-newdatade$inopbiomass <- exp(predict(model1de.seg, newdata = newdatade, type="response"))
+newdatade <- expand.grid(YEAR = fams.ereb$YEAR, TRAPNAME = levels(droplevels(as.factor(fams.ereb$TRAPNAME))), inopbiomass = 0)
+newdatade$inopbiomass <- exp(predict(model1deG, newdata = newdatade, type="response"))
 newdatade <- ddply(newdatade, .(YEAR), numcolwise(mean))
 
 averagede <- ddply(fams.ereb,.(YEAR), summarise,
@@ -1224,15 +1538,16 @@ fig1d <- ggplot()+
   geom_line(data = averaged, aes(x= YEAR, y = inopbiomass, colour=Family), alpha= 0.75)+
   scale_colour_manual(values = c("blueviolet","darkolivegreen3","darkslategrey"))+
   scale_y_log10(breaks = c(1000,10000,100000,1000000), labels = comma, limits = c(200,1200000)) +
-  labs(y = "Mean annual biomass \nper trap (mg)" , x = "Year") +
+  labs(y = "Mean annual biomass \nper trap (mg)" , x = "Year", tag = "b") +
   theme_classic()+
   theme(axis.text=element_text(size=15),
         axis.title=element_text(size=15),
         legend.text=element_text(size=15),
-        legend.title=element_text(size=17))
+        legend.title=element_text(size=17),
+        plot.tag=element_text(size=30))
 fig1d
 
-ggsave("Checked/Figures/Panels/Fig1d.svg", plot = fig1d, device = svg,
+ggsave("Figures/Panels/Fig1d.svg", plot = fig1d, device = svg,
        width = 270, height = 160, units = "mm", limitsize = T)
 
 
@@ -1283,8 +1598,8 @@ chkres(model1esa.seg, arable.small$trap, arable.small$YEAR)
 
 # set up the data for a figure
 
-newdataesa <- expand.grid(YEAR = arable.small$YEAR, trap = levels(droplevels(arable.small$trap)), inopbiomass = 0)
-newdataesa$inopbiomass <- exp(predict(model1esa.seg, newdata = newdataesa, type="response"))
+newdataesa <- expand.grid(YEAR = arable.small$YEAR, trap = levels(droplevels(as.factor(arable.small$trap))), inopbiomass = 0)
+newdataesa$inopbiomass <- exp(predict(model1esaG, newdata = newdataesa, type="response"))
 newdataesa <- ddply(newdataesa, .(YEAR), numcolwise(mean))
 
 averageesa <- ddply(arable.small,.(YEAR), summarise,
@@ -1328,7 +1643,7 @@ chkres(model1esw.seg, wood.small$trap, wood.small$YEAR)
 
 # set up the data for a figure
 
-newdataesw <- expand.grid(YEAR = wood.small$YEAR, trap = levels(droplevels(wood.small$trap)), inopbiomass = 0)
+newdataesw <- expand.grid(YEAR = wood.small$YEAR, trap = levels(droplevels(as.factor(wood.small$trap))), inopbiomass = 0)
 newdataesw$inopbiomass <- exp(predict(model1esw.seg, newdata = newdataesw, type="response"))
 newdataesw <- ddply(newdataesw, .(YEAR), numcolwise(mean))
 
@@ -1372,8 +1687,8 @@ chkres(model1esg.seg, grass.small$trap, grass.small$YEAR)
 
 # set up the data for a figure
 
-newdataesg <- expand.grid(YEAR = grass.small$YEAR, trap = levels(droplevels(grass.small$trap)), inopbiomass = 0)
-newdataesg$inopbiomass <- exp(predict(model1esg.seg, newdata = newdataesg, type="response"))
+newdataesg <- expand.grid(YEAR = grass.small$YEAR, trap = levels(droplevels(as.factor(grass.small$trap))), inopbiomass = 0)
+newdataesg$inopbiomass <- exp(predict(model1esgG, newdata = newdataesg, type="response"))
 newdataesg <- ddply(newdataesg, .(YEAR), numcolwise(mean))
 
 averageesg <- ddply(grass.small,.(YEAR), summarise,
@@ -1419,8 +1734,8 @@ chkres(model1esu.seg, urban.small$trap, urban.small$YEAR)
 
 # set up the data for a figure
 
-newdataesu <- expand.grid(YEAR = urban.small$YEAR, trap = levels(droplevels(urban.small$trap)), inopbiomass = 0)
-newdataesu$inopbiomass <- exp(predict(model1esu.seg, newdata = newdataesu, type="response"))
+newdataesu <- expand.grid(YEAR = urban.small$YEAR, trap = levels(droplevels(as.factor(urban.small$trap))), inopbiomass = 0)
+newdataesu$inopbiomass <- exp(predict(model1esuG, newdata = newdataesu, type="response"))
 newdataesu <- ddply(newdataesu, .(YEAR), numcolwise(mean))
 
 averageesu <- ddply(urban.small,.(YEAR), summarise,
@@ -1459,16 +1774,17 @@ fig1es <- ggplot()+
   geom_line(data=newdataes, aes(x=YEAR, y=inopbiomass, colour=Landuse), size = 1) +
   scale_colour_manual(values = c("royalblue","goldenrod","grey30","coral3"), name = "Land-use")+
   scale_y_log10(breaks = c(1000,10000,100000,1000000), labels = comma, limits = c(200,1200000)) +
-  labs(y = "Mean annual biomass \nper trap (mg)" , x = "Year") +
+  labs(y = "Mean annual biomass \nper trap (mg)" , x = "Year", tag = "c") +
   theme_classic()+
   theme(axis.text=element_text(size=15),
         axis.title=element_text(size=15),
         legend.text=element_text(size=15),
+        plot.tag=element_text(size=30),
         legend.title=element_text(size=17))
 
 fig1es
 
-ggsave("Checked/Figures/Panels/Fig1e.svg", plot = fig1es, device = svg,
+ggsave("Figures/Panels/Fig1e.svg", plot = fig1es, device = svg,
        width = 240, height = 160, units = "mm", limitsize = T)
 
 
@@ -1510,8 +1826,8 @@ chkres(model1esc.seg, changing.small$trap, changing.small$YEAR)
 
 # set up the data for a figure
 
-newdataesc <- expand.grid(YEAR = changing.small$YEAR, trap = levels(droplevels(changing.small$trap)), inopbiomass = 0)
-newdataesc$inopbiomass <- exp(predict(model1esc.seg, newdata = newdataesc, type="response"))
+newdataesc <- expand.grid(YEAR = changing.small$YEAR, trap = levels(droplevels(as.factor(changing.small$trap))), inopbiomass = 0)
+newdataesc$inopbiomass <- exp(predict(model1escG, newdata = newdataesc, type="response"))
 newdataesc <- ddply(newdataesc, .(YEAR), numcolwise(mean))
 
 averageesc <- ddply(changing.small,.(YEAR), summarise,
@@ -1554,7 +1870,7 @@ chkres(model1ess.seg, same.small$trap, same.small$YEAR)
 
 # set up the data for a figure
 
-newdataess <- expand.grid(YEAR = same.small$YEAR, trap = levels(droplevels(same.small$trap)), inopbiomass = 0)
+newdataess <- expand.grid(YEAR = same.small$YEAR, trap = levels(droplevels(as.factor(same.small$trap))), inopbiomass = 0)
 newdataess$inopbiomass <- exp(predict(model1ess.seg, newdata = newdataess, type="response"))
 newdataess <- ddply(newdataess, .(YEAR), numcolwise(mean))
 
@@ -1595,7 +1911,7 @@ fig1esc <- ggplot()+
 
 fig1esc
 
-ggsave("Checked/Figures/FigLanduseChange.svg", plot = fig1esc, device = svg,
+ggsave("Figures/FigLanduseChange.svg", plot = fig1esc, device = svg,
        width = 240, height = 160, units = "mm", limitsize = T)
 
 
@@ -1608,16 +1924,17 @@ fig1ac <- ggplot(same.small, aes(x = YEAR, y = inopbiomass))+
   geom_line(data=newdataess, aes(x=YEAR, y=inopbiomass)) +
   geom_line(data = averageess, aes(x= YEAR, y = inopbiomass), size= 0.75)+
   scale_y_log10(breaks = c(1000,10000,100000, 1000000), labels = comma, limits = c(200,1200000)) +
-  labs(y = "Total annual \nbiomass (mg)" , x = "Year") +
+  labs(y = "Total annual \nbiomass (mg)" , x = "Year", tag = "a") +
   theme_classic()+
   theme(axis.text=element_text(size=15),
         axis.title=element_text(size=15),
+        plot.tag=element_text(size=30),
         legend.position = "none")
 
 fig1ac
 
 
-ggsave("Checked/Figures/FigLanduseConsistent.svg", plot = fig1ac, device = svg,
+ggsave("Figures/FigLanduseConsistent.svg", plot = fig1ac, device = svg,
        width = 240, height = 160, units = "mm", limitsize = T)
 
 
@@ -1661,8 +1978,8 @@ chkres(model1esc.seg.DS, changing.small.DS$trap, changing.small.DS$YEAR)
 
 # set up the data for a figure
 
-newdataesc.DS <- expand.grid(YEAR = changing.small.DS$YEAR, trap = levels(droplevels(changing.small.DS$trap)), inopbiomass = 0)
-newdataesc.DS$inopbiomass <- exp(predict(model1esc.seg.DS, newdata = newdataesc.DS, type="response"))
+newdataesc.DS <- expand.grid(YEAR = changing.small.DS$YEAR, trap = levels(droplevels(as.factor(changing.small.DS$trap))), inopbiomass = 0)
+newdataesc.DS$inopbiomass <- exp(predict(model1escG.DS, newdata = newdataesc.DS, type="response"))
 newdataesc.DS <- ddply(newdataesc.DS, .(YEAR), numcolwise(mean))
 
 averageesc.DS <- ddply(changing.small.DS,.(YEAR), summarise,
@@ -1705,8 +2022,8 @@ chkres(model1ess.seg.DS, same.small.DS$trap, same.small.DS$YEAR)
 
 # set up the data for a figure
 
-newdataess.DS <- expand.grid(YEAR = same.small.DS$YEAR, trap = levels(droplevels(same.small.DS$trap)), inopbiomass = 0)
-newdataess.DS$inopbiomass <- exp(predict(model1ess.seg.DS, newdata = newdataess.DS, type="response"))
+newdataess.DS <- expand.grid(YEAR = same.small.DS$YEAR, trap = levels(droplevels(as.factor(same.small.DS$trap))), inopbiomass = 0)
+newdataess.DS$inopbiomass <- exp(predict(model1essG.DS, newdata = newdataess.DS, type="response"))
 newdataess.DS <- ddply(newdataess.DS, .(YEAR), numcolwise(mean))
 
 averageess.DS <- ddply(same.small.DS,.(YEAR), summarise,
@@ -1746,7 +2063,7 @@ fig1esc.DS <- ggplot()+
 
 fig1esc.DS
 
-ggsave("Checked/Figures/FigLanduseChangeDS.svg", plot = fig1esc.DS, device = svg,
+ggsave("Figures/FigLanduseChangeDS.svg", plot = fig1esc.DS, device = svg,
        width = 240, height = 160, units = "mm", limitsize = T)
 
 
@@ -1759,23 +2076,24 @@ fig1ac.DS <- ggplot(same.small.DS, aes(x = YEAR, y = inopbiomass))+
   geom_line(data=newdataess.DS, aes(x=YEAR, y=inopbiomass)) +
   geom_line(data = averageess.DS, aes(x= YEAR, y = inopbiomass), size= 0.75)+
   scale_y_log10(breaks = c(1000,10000,100000, 1000000), labels = comma, limits = c(200,1200000)) +
-  labs(y = "Total annual \nbiomass (mg)" , x = "Year") +
+  labs(y = "Total annual \nbiomass (mg)" , x = "Year", tag = "b") +
   theme_classic()+
   theme(axis.text=element_text(size=15),
         axis.title=element_text(size=15),
+        plot.tag=element_text(size=30),
         legend.position = "none")
 
 fig1ac.DS
 
 
-ggsave("Checked/Figures/FigLanduseConsistentDS.svg", plot = fig1ac, device = svg,
+ggsave("Figures/FigLanduseConsistentDS.svg", plot = fig1ac, device = svg,
        width = 240, height = 160, units = "mm", limitsize = T)
 
 
 
 m.90DS <- grid.arrange(fig1ac,fig1ac.DS)
 
-ggsave("Checked/Figures/FigLanduseConsistentBoth.svg", plot = m.90DS, device = svg,
+ggsave("Figures/FigLanduseConsistentBoth.svg", plot = m.90DS, device = svg,
        width = 240, height = 320, units = "mm", limitsize = T)
 
 
@@ -1799,7 +2117,7 @@ ggsave("Checked/Figures/FigLanduseConsistentBoth.svg", plot = m.90DS, device = s
 # early
 
 # first, fit the regular linear model, diving straight in at neg binom
-arable.small.early <- arable.small[which(arable.small$YEAR <= 1982), ]
+arable.small.early <- arable.small[which(arable.small$YEAR <= 1976), ]
 
 
 hist(arable.small.early$inopbiomass)
@@ -1822,21 +2140,20 @@ perc.ase <- 100*((exp(summary(model1fsaeNB)$coefficients[2,1])^10)-1)
 
 
 
-
 # set up the data for a figure
 
-newdatafsae <- expand.grid(YEAR = arable.small.early$YEAR, trap = levels(droplevels(arable.small.early$trap)), inopbiomass = 0)
+newdatafsae <- expand.grid(YEAR = arable.small.early$YEAR, trap = levels(droplevels(as.factor(arable.small.early$trap))), inopbiomass = 0)
 newdatafsae$inopbiomass <- exp(predict(model1fsaeNB, newdata = newdatafsae, type="response"))
 newdatafsae <- ddply(newdatafsae, .(YEAR), numcolwise(mean))
 newdatafsae$Model <- "Arable, early"
-newdatafsae$Significance <- "Significant"
+newdatafsae$Significance <- "Non-significant"
 newdatafsae$Landuse <- "Arable"
 
 
 # late
 
 # first, fit the regular linear model, diving straight in at neg binom
-arable.small.late <- arable.small[which(arable.small$YEAR > 1982), ]
+arable.small.late <- arable.small[which(arable.small$YEAR > 1976), ]
 
 
 hist(arable.small.late$inopbiomass)
@@ -1862,7 +2179,7 @@ perc.asl <- 100*((exp(summary(model1fsalNB)$coefficients[2,1])^10)-1)
 
 # set up the data for a figure
 
-newdatafsal <- expand.grid(YEAR = arable.small.late$YEAR, trap = levels(droplevels(arable.small.late$trap)), inopbiomass = 0)
+newdatafsal <- expand.grid(YEAR = arable.small.late$YEAR, trap = levels(droplevels(as.factor(arable.small.late$trap))), inopbiomass = 0)
 newdatafsal$inopbiomass <- exp(predict(model1fsalNB, newdata = newdatafsal, type="response"))
 newdatafsal <- ddply(newdatafsal, .(YEAR), numcolwise(mean))
 newdatafsal$Model <- "Arable, late"
@@ -1874,7 +2191,7 @@ newdatafsal$Landuse <- "Arable"
 # early
 
 # first, fit the regular linear model, diving straight in at neg binom
-wood.small.early <- wood.small[which(wood.small$YEAR <= 1982), ]
+wood.small.early <- wood.small[which(wood.small$YEAR <= 1976), ]
 
 
 hist(wood.small.early$inopbiomass)
@@ -1900,17 +2217,17 @@ perc.wse <- 100*((exp(summary(model1fsweNB)$coefficients[2,1])^10)-1)
 
 # set up the data for a figure
 
-newdatafswe <- expand.grid(YEAR = wood.small.early$YEAR, trap = levels(droplevels(wood.small.early$trap)), inopbiomass = 0)
+newdatafswe <- expand.grid(YEAR = wood.small.early$YEAR, trap = levels(droplevels(as.factor(wood.small.early$trap))), inopbiomass = 0)
 newdatafswe$inopbiomass <- exp(predict(model1fsweNB, newdata = newdatafswe, type="response"))
 newdatafswe <- ddply(newdatafswe, .(YEAR), numcolwise(mean))
 newdatafswe$Model <- "wood, early"
-newdatafswe$Significance <- "Significant"
+newdatafswe$Significance <- "Non-significant"
 newdatafswe$Landuse <- "Woodland"
 
 # late
 
 # first, fit the regular linear model, diving straight in at neg binom
-wood.small.late <- wood.small[which(wood.small$YEAR > 1982), ]
+wood.small.late <- wood.small[which(wood.small$YEAR > 1976), ]
 
 
 hist(wood.small.late$inopbiomass)
@@ -1935,7 +2252,7 @@ perc.wsl <- 100*((exp(summary(model1fswlNB)$coefficients[2,1])^10)-1)
 
 # set up the data for a figure
 
-newdatafswl <- expand.grid(YEAR = wood.small.late$YEAR, trap = levels(droplevels(wood.small.late$trap)), inopbiomass = 0)
+newdatafswl <- expand.grid(YEAR = wood.small.late$YEAR, trap = levels(droplevels(as.factor(wood.small.late$trap))), inopbiomass = 0)
 newdatafswl$inopbiomass <- exp(predict(model1fswlNB, newdata = newdatafswl, type="response"))
 newdatafswl <- ddply(newdatafswl, .(YEAR), numcolwise(mean))
 newdatafswl$Model <- "wood, late"
@@ -1947,7 +2264,7 @@ newdatafswl$Landuse <- "Woodland"
 # early
 
 # first, fit the regular linear model, diving straight in at neg binom
-grass.small.early <- grass.small[which(grass.small$YEAR <= 1982), ]
+grass.small.early <- grass.small[which(grass.small$YEAR <= 1976), ]
 
 
 hist(grass.small.early$inopbiomass)
@@ -1972,17 +2289,17 @@ perc.gse <- 100*((exp(summary(model1fsgeNB)$coefficients[2,1])^10)-1)
 
 # set up the data for a figure
 
-newdatafsge <- expand.grid(YEAR = grass.small.early$YEAR, trap = levels(droplevels(grass.small.early$trap)), inopbiomass = 0)
+newdatafsge <- expand.grid(YEAR = grass.small.early$YEAR, trap = levels(droplevels(as.factor(grass.small.early$trap))), inopbiomass = 0)
 newdatafsge$inopbiomass <- exp(predict(model1fsgeNB, newdata = newdatafsge, type="response"))
 newdatafsge <- ddply(newdatafsge, .(YEAR), numcolwise(mean))
 newdatafsge$Model <- "grass, early"
-newdatafsge$Significance <- "Significant"
+newdatafsge$Significance <- "Non-significant"
 newdatafsge$Landuse <- "Grassland"
 
 # late
 
 # first, fit the regular linear model, diving straight in at neg binom
-grass.small.late <- grass.small[which(grass.small$YEAR > 1982), ]
+grass.small.late <- grass.small[which(grass.small$YEAR > 1976), ]
 
 
 hist(grass.small.late$inopbiomass)
@@ -2007,7 +2324,7 @@ perc.gsl <- 100*((exp(summary(model1fsglNB)$coefficients[2,1])^10)-1)
 
 # set up the data for a figure
 
-newdatafsgl <- expand.grid(YEAR = grass.small.late$YEAR, trap = levels(droplevels(grass.small.late$trap)), inopbiomass = 0)
+newdatafsgl <- expand.grid(YEAR = grass.small.late$YEAR, trap = levels(droplevels(as.factor(grass.small.late$trap))), inopbiomass = 0)
 newdatafsgl$inopbiomass <- exp(predict(model1fsglNB, newdata = newdatafsgl, type="response"))
 newdatafsgl <- ddply(newdatafsgl, .(YEAR), numcolwise(mean))
 newdatafsgl$Model <- "grass, late"
@@ -2020,7 +2337,7 @@ newdatafsgl$Landuse <- "Grassland"
 # early
 
 # first, fit the regular linear model, diving straight in at neg binom
-urban.small.early <- urban.small[which(urban.small$YEAR <= 1982), ]
+urban.small.early <- urban.small[which(urban.small$YEAR <= 1976), ]
 
 
 hist(urban.small.early$inopbiomass)
@@ -2045,17 +2362,17 @@ perc.use <- 100*((exp(summary(model1fsueNB)$coefficients[2,1])^10)-1)
 
 # set up the data for a figure
 
-newdatafsue <- expand.grid(YEAR = urban.small.early$YEAR, trap = levels(droplevels(urban.small.early$trap)), inopbiomass = 0)
+newdatafsue <- expand.grid(YEAR = urban.small.early$YEAR, trap = levels(droplevels(as.factor(urban.small.early$trap))), inopbiomass = 0)
 newdatafsue$inopbiomass <- exp(predict(model1fsueNB, newdata = newdatafsue, type="response"))
 newdatafsue <- ddply(newdatafsue, .(YEAR), numcolwise(mean))
 newdatafsue$Model <- "urban, early"
-newdatafsue$Significance <- "Significant"
+newdatafsue$Significance <- "Non-significant"
 newdatafsue$Landuse <- "Urban"
 
 # late
 
 # first, fit the regular linear model, diving straight in at neg binom
-urban.small.late <- urban.small[which(urban.small$YEAR > 1982), ]
+urban.small.late <- urban.small[which(urban.small$YEAR > 1976), ]
 
 
 hist(urban.small.late$inopbiomass)
@@ -2080,7 +2397,7 @@ perc.usl <- 100*((exp(summary(model1fsulNB)$coefficients[2,1])^10)-1)
 
 # set up the data for a figure
 
-newdatafsul <- expand.grid(YEAR = urban.small.late$YEAR, trap = levels(droplevels(urban.small.late$trap)), inopbiomass = 0)
+newdatafsul <- expand.grid(YEAR = urban.small.late$YEAR, trap = levels(droplevels(as.factor(urban.small.late$trap))), inopbiomass = 0)
 newdatafsul$inopbiomass <- exp(predict(model1fsulNB, newdata = newdatafsul, type="response"))
 newdatafsul <- ddply(newdatafsul, .(YEAR), numcolwise(mean))
 newdatafsul$Model <- "urban, late"
@@ -2109,20 +2426,33 @@ fig1fs <- ggplot()+
   scale_linetype_manual(values = c("dashed","solid"))+
   scale_colour_manual(values = c("royalblue","goldenrod","grey30","coral3"), name = "Land-use")+
   scale_y_log10(breaks = c(1000,10000,100000,1000000), labels = comma, limits = c(200,1200000)) +
-  labs(y = "Mean annual biomass \nper trap (mg)" , x = "Year") +
+  labs(y = "Mean annual biomass \nper trap (mg)" , x = "Year", tag = "d") +
   theme_classic()+
   theme(axis.text=element_text(size=15),
         axis.title=element_text(size=15),
         legend.text=element_text(size=15),
+        plot.tag=element_text(size=30),
         legend.title=element_text(size=17))
 
 fig1fs
 
 
-ggsave("Checked/Figures/Panels/Fig1f.svg", plot = fig1fs, device = svg,
+ggsave("Figures/Panels/Fig1f.svg", plot = fig1fs, device = svg,
        width = 240, height = 160, units = "mm", limitsize = T)
 
 
+## sticking my nose back in to create a couple of slightly different formats for this figure!
+
+ggsave("Figures/Panels/Fig1f_4.3.svg", plot = fig1fs, device = svg,
+       width = 240, height = 180, units = "mm", limitsize = T)
+
+fig1fs_noleg <- fig1fs+
+  theme(legend.position = "none")
+
+fig1fs_noleg
+
+ggsave("Figures/Panels/Fig1f_4.3_noleg.svg", plot = fig1fs_noleg, device = svg,
+       width = 240, height = 180, units = "mm", limitsize = T)
 
 
 #### extract final figure 1
@@ -2153,7 +2483,7 @@ fig1.small <- grid.arrange(arrangeGrob(fig1a,fig1d + theme(legend.position = "no
                                        ncol=1),
                            ncol=2, widths = c(10,2))
 
-ggsave("Checked/Figures/Fig1_small.svg", plot = fig1.small, device = svg,
+ggsave("Figures/Fig1_small.svg", plot = fig1.small, device = svg,
        width = 350, height = 250, units = "mm", limitsize = T)
 
 
@@ -2168,14 +2498,14 @@ fams.ereb$trap <- fams.ereb$TRAPNAME
 fams.geom$trap <- fams.geom$TRAPNAME
 fams.noct$trap <- fams.noct$TRAPNAME
 
-fams.ereb <- merge(fams.ereb, landuse.trim)
-fams.geom <- merge(fams.geom, landuse.trim)
-fams.noct <- merge(fams.noct, landuse.trim)
+fams.ereb <- merge(fams.ereb, landuse.unique)
+fams.geom <- merge(fams.geom, landuse.unique)
+fams.noct <- merge(fams.noct, landuse.unique)
 
 # now the loop will be easier to write if we combine these...
 fams.comb <- rbind(fams.ereb,fams.geom,fams.noct)
 
-fams.list <- levels(droplevels(fams.comb$FAMILY))
+fams.list <- levels(droplevels(as.factor(fams.comb$FAMILY)))
 
 ## and we need to classify the land-uses, as above
 fams.comb$CLASS <- as.factor(ifelse(fams.comb$small %in% grasslandclass, "Grassland",
@@ -2255,7 +2585,7 @@ for (use in uses.list){
             plot.title = element_text(hjust = 0.5, size = 25))+
       ggtitle(paste0("\n",use))
     
-    ggsave(paste0("Checked/Figures/FamilyLanduse/",use,".png"), plot = guse, device = 'png',
+    ggsave(paste0("Figures/FamilyLanduse/",use,".png"), plot = guse, device = 'png',
            width = 240, height = 160, units = "mm", limitsize = T)
     
     print(guse)
@@ -2274,7 +2604,7 @@ leg1d <- g_legend(fig1d)
 
 fig.combs.leg <- grid.arrange(fig.combs, leg1d, ncol = 2, widths = c(10,2))
 
-ggsave("Checked/Figures/Fig_combs.svg", plot = fig.combs.leg, device = svg,
+ggsave("Figures/Fig_combs.svg", plot = fig.combs.leg, device = svg,
        width = 500, height = 300, units = "mm", limitsize = T)
 
 
@@ -2292,10 +2622,10 @@ summary(fams.noct)
 
 
 # pick out the relevant data
-table.s2.overall <- alltraps.no0[,c(1,2,9)]
-table.s2.ereb <- fams.ereb[,c(2,3,5)]
-table.s2.geom <- fams.geom[,c(2,3,5)]
-table.s2.noct <- fams.noct[,c(2,3,5)]
+table.s2.overall <- alltraps.no0[,c(1,2,7)]
+table.s2.ereb <- fams.ereb[,c(3,1,5)]
+table.s2.geom <- fams.geom[,c(3,1,5)]
+table.s2.noct <- fams.noct[,c(3,1,5)]
 
 # match up and prep the column names
 colnames(table.s2.overall) <- c("Year","Trap","DerivedTotalBiomass")
@@ -2316,7 +2646,11 @@ summary(table.s2)
 head(table.s2)
 
 # export
-write.csv(table.s2, "Checked/TableS7.csv", row.names = F)
+write.csv(table.s2, "TableS7.csv", row.names = F)
+
+
+
+
 
 #### Fig S2 - break-points
 
@@ -2387,7 +2721,7 @@ figs2a <- ggplot(seg.mod.breaks.a, aes(x = ModelGroup, y = Break, ymin = LCI, ym
   geom_errorbar(width = 0.5)+
   coord_flip()+
   theme_classic()+
-  scale_y_continuous(limits = c(1962,2018), breaks = seq(1970,2010,10))+
+  scale_y_continuous(limits = c(1962,2018), breaks = seq(1970,2010,10), oob=squish)+
   xlab("Model")+ ylab("Estimated break point")+
   scale_colour_manual(values = c("royalblue","goldenrod","coral3"))+
   theme(legend.position = "none",
@@ -2399,7 +2733,7 @@ figs2a
 
 
 
-ggsave("Checked/Figures/FigS2a.svg", plot = figs2a, device = svg,
+ggsave("Figures/FigS2a.svg", plot = figs2a, device = svg,
        width = 150, height = 60, units = "mm", limitsize = T)
 
 
@@ -2412,8 +2746,8 @@ ggsave("Checked/Figures/FigS2a.svg", plot = figs2a, device = svg,
 
 # we are assessing these things to see whether there is a serious risk of biasing the results with the current adjustment
 
-inops <- read.csv("../Raw/Callum Macgregor Moths Long Running Sites/Inoperative days Excluding Barnfield.csv", header = T)
-inops.barn <- read.csv("../Raw/Callum Macgregor Moths Long Running Sites/Inoperative days Barnfield.csv", header = T)
+inops <- read.csv("../../Raw/Callum Macgregor Moths Long Running Sites/Inoperative days Excluding Barnfield.csv", header = T)
+inops.barn <- read.csv("../../Raw/Callum Macgregor Moths Long Running Sites/Inoperative days Barnfield.csv", header = T)
 
 inops <- rbind(inops, inops.barn)
 
@@ -2481,7 +2815,7 @@ medInop <- median(inops.zeroes$InopPerc)
 ginops <- ggplot(inops.zeroes, aes(x = InopPerc))+
   geom_histogram(binwidth = 1)+
   geom_vline(aes(xintercept = medInop), linetype="dashed")+
-  xlab("% inoperative days per year")+ ylab("Frequency")+
+  xlab("% inoperative days per year")+ ylab("Frequency")+ labs(tag = "b")+
   theme_classic()
 
 ginops
@@ -2520,7 +2854,7 @@ summary(inops.days$Perc)
 
 ginopdays <- ggplot(inops.days, aes(x = CalDay, y = Perc))+
   geom_line(stat = "identity")+
-  xlab("Julian day")+ ylab("% inoperative trap-years")+
+  xlab("Julian day")+ ylab("% inoperative trap-years")+ labs(tag = "a")+
   ylim(c(0,4))+
   theme_classic()
 
@@ -2529,7 +2863,7 @@ ginopdays
 
 minop <- grid.arrange(ginopdays,ginops, ncol = 1)
 
-ggsave("Checked/Figures/FigInops.svg", plot = minop, device = svg,
+ggsave("Figures/FigInops.svg", plot = minop, device = svg,
        width = 150, height = 100, units = "mm", limitsize = T)
 
 
@@ -2554,7 +2888,7 @@ summary(inops.days.normal$Years)
 summary(alltraps.no0)
 
 # seed a list of sites to run across
-trap.list <- levels(droplevels(alltraps.no0$trap))
+trap.list <- levels(droplevels(as.factor(alltraps.no0$trap)))
 
 
 # seed an output frame for a loop
@@ -2619,15 +2953,14 @@ summary(prop.change)
 ## finally merge the climate and land-use data into these data
 
 # read it in
-climate <- read.csv("Checked/Landuse and climate/Climate data/sites_climate.csv", header = T)
+climate <- read.csv("../Checked/Landuse and climate/Climate data/sites_climate.csv", header = T)
 
 # merge it in
 prop.changes.climate <- merge(prop.change, climate, all.x = T)
 
 
 ## and pull in the land-use data as well
-landuse$trap <- landuse$SITE
-change.climate.landuse <- merge(prop.changes.climate, landuse, all.x = T, by = "trap")
+change.climate.landuse <- merge(prop.changes.climate, landuse.unique, all.x = T, by = "trap")
 
 
 ## finally, calculate a single annual mean for proportional change per land-use type (averaging across sites)
@@ -2686,7 +3019,7 @@ cast.cals.est <- spread(change.annual.landuse.small[,c(1:3)], key = small.cat, v
 
 summary(all.landuse)
 
-trap.summary <- ddply(all.landuse, .(trap,LongestDuration,small,EASTING,NORTHING,HEast,HNorth,LAT,LON), summarise,
+trap.summary <- ddply(all.landuse, .(trap,small,EASTING,NORTHING,HEast,HNorth,LAT,LON), summarise,
                       no.years = length(YEAR),
                       first.year = min(YEAR))
 
@@ -2697,7 +3030,7 @@ trap.summary$small.cat <- as.factor(ifelse(trap.summary$small %in% grasslandclas
                                                   ifelse(trap.summary$small %in% arableclass, "Arable",
                                                          ifelse(trap.summary$small %in% urbanclass, "Urban","Other")))))
 
-trap.summary$duration.cat <- as.factor(ifelse(trap.summary$LongestDuration >= 50, "50+ years", "30-49 years"))
+trap.summary$duration.cat <- as.factor(ifelse(trap.summary$no.years >= 50, "50+ years", "30-49 years"))
 
 
 trap.summary$start.cat <- as.factor(ifelse(trap.summary$first.year > 1970, "After 1970","1970 or earlier"))
@@ -2706,7 +3039,7 @@ trap.summary$start.cat <- as.factor(ifelse(trap.summary$first.year > 1970, "Afte
 summary(trap.summary)
 
 # write out this table for use elsewhere
-write.csv(trap.summary, "Checked/trap_summary.csv", row.names = F)
+write.csv(trap.summary, "trap_summary.csv", row.names = F)
 
 
 # remind ourselves of the map data from the top
@@ -2732,7 +3065,7 @@ map
 
 
 
-ggsave("Checked/Figures/FigS1.svg", plot = map, device = svg,
+ggsave("Figures/FigS1.svg", plot = map, device = svg,
        width = 150, height = 150, units = "mm")
 
 
@@ -2772,37 +3105,30 @@ r.squaredGLMM(model2aG)
 
 
 
-# since this was significant, let's predict some data to put a line on a graph
-
-
-newdata2a <- expand.grid(year = change.climate.landuse$year, trap = levels(droplevels(change.climate.landuse$trap)), prop.change.inopbiomass = 0)
-newdata2a$prop.change.inopbiomass <- predict(model2aG, newdata = newdata2a, type="response")
-newdata2a <- ddply(newdata2a, .(year), numcolwise(mean))
-
-
+# make a graph
 
 
 fig2a <- ggplot(change.climate.landuse, aes(x = year, y = prop.change.inopbiomass))+
   geom_line(aes(group = trap.run),
             colour = "grey70") +
   geom_line(data = change.average.all, aes(x = year, y = mean.change.inopbiomass), size= 0.75)+
-  geom_line(data = newdata2a, aes(x = year, y = exp(prop.change.inopbiomass)), colour = "royalblue", size = 0.8)+
   scale_y_log10(breaks = c(0.1,1,10), limits = c(0.02,20)) +
-  labs(y = "Proportional biomass change \nsince previous year" , x = "Year") +
+  labs(y = "Proportional biomass change \nsince previous year" , x = "Year", tag = "a") +
   theme_classic()+
   theme(axis.text=element_text(size=15),
         axis.title=element_text(size=15),
+        plot.tag=element_text(size=30),
         legend.position = "none")
 
 
 fig2a
 
-ggsave("Checked/Figures/Panels/Fig2a.svg", plot = fig2a, device = svg,
+ggsave("Figures/Panels/Fig2a.svg", plot = fig2a, device = svg,
        width = 240, height = 160, units = "mm", limitsize = T)
 
 
 
-### Fig 2b - change in biomass against temperature
+### Fig 2c - change in biomass against temperature
 
 # fit the regular linear model
 
@@ -2827,16 +3153,17 @@ r.squaredGLMM(model2bG)
 fig2b <- ggplot(change.climate.landuse, aes(x = meanmonthlytemp, y = prop.change.inopbiomass))+
   geom_point() +
   scale_y_log10(breaks = c(0.1,1,10), limits = c(0.02,20)) +
-  labs(y = "Proportional biomass change \nsince previous year" , x = "Mean daily temperature (degrees Celsius)") +
+  labs(y = "Proportional biomass change \nsince previous year" , x = "Mean daily temperature (degrees Celsius)", tag = "c") +
   theme_classic()+
   theme(axis.text=element_text(size=15),
         axis.title=element_text(size=15),
+        plot.tag=element_text(size=30),
         legend.position = "none")
 
 
 fig2b
 
-ggsave("Checked/Figures/Panels/Fig2c.svg", plot = fig2b, device = svg,
+ggsave("Figures/Panels/Fig2c.svg", plot = fig2b, device = svg,
        width = 240, height = 160, units = "mm", limitsize = T)
 
 
@@ -2877,7 +3204,7 @@ fig2ba
 
 
 
-### Fig 2c - change in biomass against rainfall
+### Fig 2d - change in biomass against rainfall
 
 
 # fit the regular linear model
@@ -2903,16 +3230,17 @@ r.squaredGLMM(model2cG)
 fig2c <- ggplot(change.climate.landuse, aes(x = annualrain, y = prop.change.inopbiomass))+
   geom_point() +
   scale_y_log10(breaks = c(0.1,1,10), limits = c(0.02,20)) +
-  labs(y = "Proportional biomass change \nsince previous year" , x = "Annual rainfall (mm)") +
+  labs(y = "Proportional biomass change \nsince previous year" , x = "Annual rainfall (mm)", tag = "d") +
   theme_classic()+
   theme(axis.text=element_text(size=15),
         axis.title=element_text(size=15),
+        plot.tag=element_text(size=30),
         legend.position = "none")
 
 
 fig2c
 
-ggsave("Checked/Figures/Panels/Fig2d.svg", plot = fig2c, device = svg,
+ggsave("Figures/Panels/Fig2d.svg", plot = fig2c, device = svg,
        width = 240, height = 160, units = "mm", limitsize = T)
 
 
@@ -2957,7 +3285,7 @@ fig2ca
 
 
 
-### Fig 2d - change in biomass against previous year's biomass
+### Fig 2b - change in biomass against previous year's biomass
 
 
 # fit the regular linear model
@@ -2981,7 +3309,7 @@ r.squaredGLMM(model2dG)
 # since this was significant, let's predict some data to put a line on a graph
 
 
-newdata2d <- expand.grid(prev.inop.biomass = change.climate.landuse$prev.inop.biomass, trap = levels(droplevels(change.climate.landuse$trap)), prop.change.inopbiomass = 0)
+newdata2d <- expand.grid(prev.inop.biomass = change.climate.landuse$prev.inop.biomass, trap = levels(droplevels(as.factor(change.climate.landuse$trap))), prop.change.inopbiomass = 0)
 newdata2d$prop.change.inopbiomass <- predict(model2dG, newdata = newdata2d, type="response")
 newdata2d <- ddply(newdata2d, .(prev.inop.biomass), numcolwise(mean))
 
@@ -2994,16 +3322,17 @@ fig2d <- ggplot(change.climate.landuse, aes(x = prev.inop.biomass, y = prop.chan
   geom_line(data = newdata2d, aes(x = prev.inop.biomass, y = exp(prop.change.inopbiomass)), colour = "royalblue", size = 0.8)+
   scale_y_log10(breaks = c(0.1,1,10), limits = c(0.02,20)) +
   scale_x_log10(labels = comma)+
-  labs(y = "Proportional biomass change \nsince previous year" , x = "Biomass in previous year (mg)") +
+  labs(y = "Proportional biomass change \nsince previous year" , x = "Biomass in previous year (mg)", tag = "b") +
   theme_classic()+
   theme(axis.text=element_text(size=15),
         axis.title=element_text(size=15),
+        plot.tag=element_text(size=30),
         legend.position = "none")
 
 
 fig2d
 
-ggsave("Checked/Figures/Panels/Fig2b.svg", plot = fig2d, device = svg,
+ggsave("Figures/Panels/Fig2b.svg", plot = fig2d, device = svg,
        width = 240, height = 160, units = "mm", limitsize = T)
 
 
@@ -3052,7 +3381,7 @@ fig2k <- ggplot(NDVI240.dat, aes(x = NDVI240, y = prop.change.inopbiomass))+
 
 fig2k
 
-ggsave("Checked/Figures/Panels/Fig2k.svg", plot = fig2k, device = svg,
+ggsave("Figures/Panels/Fig2k.svg", plot = fig2k, device = svg,
        width = 240, height = 160, units = "mm", limitsize = T)
 
 
@@ -3259,16 +3588,18 @@ fig2e <- ggplot(cast.cals.inop, aes(x = Grassland, y = Arable))+
   scale_y_log10(limits = c(0.4,5)) +
   scale_x_log10(limits = c(0.4,5))+
   labs(y = "Arable:\nProportional biomass change \nsince previous year" ,
-       x = "Grassland:\nProportional biomass change \nsince previous year") +
+       x = "Grassland:\nProportional biomass change \nsince previous year",
+       tag = "e") +
   theme_classic()+
   theme(axis.text=element_text(size=15),
         axis.title=element_text(size=15),
+        plot.tag=element_text(size=30),
         legend.position = "none")
 
 
 fig2e
 
-ggsave("Checked/Figures/Panels/Fig2e.svg", plot = fig2e, device = svg,
+ggsave("Figures/Panels/Fig2e.svg", plot = fig2e, device = svg,
        width = 240, height = 160, units = "mm", limitsize = T)
 
 
@@ -3315,17 +3646,19 @@ fig2f <- ggplot(cast.cals.inop, aes(x = Woodland, y = Arable))+
   scale_y_log10(limits = c(0.4,5)) +
   scale_x_log10(limits = c(0.4,5))+
   labs(y = "Arable:\nProportional biomass change \nsince previous year" ,
-       x = "Woodland:\nProportional biomass change \nsince previous year") +
+       x = "Woodland:\nProportional biomass change \nsince previous year",
+       tag = "f") +
   theme_classic()+
   theme(axis.text=element_text(size=15),
         axis.title=element_text(size=15),
+        plot.tag=element_text(size=30),
         legend.position = "none")
 
 
 fig2f
 
 
-ggsave("Checked/Figures/Panels/Fig2f.svg", plot = fig2f, device = svg,
+ggsave("Figures/Panels/Fig2f.svg", plot = fig2f, device = svg,
        width = 240, height = 160, units = "mm", limitsize = T)
 
 
@@ -3371,16 +3704,18 @@ fig2g <- ggplot(cast.cals.inop, aes(x = Urban, y = Arable))+
   scale_y_log10(limits = c(0.4,5)) +
   scale_x_log10(limits = c(0.4,5))+
   labs(y = "Arable:\nProportional biomass change \nsince previous year" ,
-       x = "Urban:\nProportional biomass change \nsince previous year") +
+       x = "Urban:\nProportional biomass change \nsince previous year",
+       tag = "g") +
   theme_classic()+
   theme(axis.text=element_text(size=15),
         axis.title=element_text(size=15),
+        plot.tag=element_text(size=30),
         legend.position = "none")
 
 
 fig2g
 
-ggsave("Checked/Figures/Panels/Fig2g.svg", plot = fig2g, device = svg,
+ggsave("Figures/Panels/Fig2g.svg", plot = fig2g, device = svg,
        width = 240, height = 160, units = "mm", limitsize = T)
 
 
@@ -3426,16 +3761,18 @@ fig2h <- ggplot(cast.cals.inop, aes(x = Woodland, y = Grassland))+
   scale_y_log10(limits = c(0.4,5)) +
   scale_x_log10(limits = c(0.4,5))+
   labs(y = "Grassland:\nProportional biomass change \nsince previous year" ,
-       x = "Woodland:\nProportional biomass change \nsince previous year") +
+       x = "Woodland:\nProportional biomass change \nsince previous year",
+       tag = "h") +
   theme_classic()+
   theme(axis.text=element_text(size=15),
         axis.title=element_text(size=15),
+        plot.tag=element_text(size=30),
         legend.position = "none")
 
 
 fig2h
 
-ggsave("Checked/Figures/Panels/Fig2h.svg", plot = fig2h, device = svg,
+ggsave("Figures/Panels/Fig2h.svg", plot = fig2h, device = svg,
        width = 240, height = 160, units = "mm", limitsize = T)
 
 
@@ -3482,10 +3819,12 @@ fig2i <- ggplot(cast.cals.inop, aes(x = Urban, y = Grassland))+
   scale_y_log10(limits = c(0.4,5)) +
   scale_x_log10(limits = c(0.4,5))+
   labs(y = "Grassland:\nProportional biomass change \nsince previous year" ,
-       x = "Urban:\nProportional biomass change \nsince previous year") +
+       x = "Urban:\nProportional biomass change \nsince previous year",
+       tag = "i") +
   theme_classic()+
   theme(axis.text=element_text(size=15),
         axis.title=element_text(size=15),
+        plot.tag=element_text(size=30),
         legend.position = "none")
 
 
@@ -3493,7 +3832,7 @@ fig2i
 
 
 
-ggsave("Checked/Figures/Panels/Fig2i.svg", plot = fig2i, device = svg,
+ggsave("Figures/Panels/Fig2i.svg", plot = fig2i, device = svg,
        width = 240, height = 160, units = "mm", limitsize = T)
 
 
@@ -3540,16 +3879,18 @@ fig2j <- ggplot(cast.cals.inop, aes(x = Urban, y = Woodland))+
   scale_y_log10(limits = c(0.4,5)) +
   scale_x_log10(limits = c(0.4,5))+
   labs(y = "Woodland:\nProportional biomass change \nsince previous year" ,
-       x = "Urban:\nProportional biomass change \nsince previous year") +
+       x = "Urban:\nProportional biomass change \nsince previous year",
+       tag = "j") +
   theme_classic()+
   theme(axis.text=element_text(size=15),
         axis.title=element_text(size=15),
+        plot.tag=element_text(size=30),
         legend.position = "none")
 
 
 fig2j
 
-ggsave("Checked/Figures/Panels/Fig2j.svg", plot = fig2j, device = svg,
+ggsave("Figures/Panels/Fig2j.svg", plot = fig2j, device = svg,
        width = 240, height = 160, units = "mm", limitsize = T)
 
 
@@ -3564,7 +3905,7 @@ fig2 <- grid.arrange(fig2a,fig2d,
                      fig2i,fig2j,
                      ncol=2)
 
-ggsave("Checked/Figures/Fig2_small.svg", plot = fig2, device = svg,
+ggsave("Figures/Fig2_small.svg", plot = fig2, device = svg,
        width = 350, height = 550, units = "mm", limitsize = T)
 
 
@@ -3586,13 +3927,17 @@ mean.annual <- ddply(alltraps.no0, .(YEAR), summarise,
 # split this off into periods of interest
 
 mean.annual.start <- mean.annual[which(mean.annual$YEAR %in% 1967:1976), ]
+mean.annual.start.no76 <- mean.annual[which(mean.annual$YEAR %in% 1967:1975), ]
 mean.annual.end <- mean.annual[which(mean.annual$YEAR %in% 2008:2017), ]
-mean.annual.peak <- mean.annual[which(mean.annual$YEAR %in% 1978:1987), ]
+mean.annual.peak <- mean.annual[which(mean.annual$YEAR %in% 1972:1981), ]
 
 
 # calculate mean biomasses per trap/decade and s.e.
 mean.start <- gm_mean(mean.annual.start$mean.biomass)
 se.start <- sd(mean.annual.start$mean.biomass)/sqrt(nrow(mean.annual.start))
+
+mean.start.no76 <- gm_mean(mean.annual.start.no76$mean.biomass)
+se.start.no76 <- sd(mean.annual.start.no76$mean.biomass)/sqrt(nrow(mean.annual.start.no76))
 
 mean.end <- gm_mean(mean.annual.end$mean.biomass)
 se.end <- sd(mean.annual.end$mean.biomass)/sqrt(nrow(mean.annual.end))
@@ -3605,6 +3950,62 @@ se.peak <- sd(mean.annual.peak$mean.biomass)/sqrt(nrow(mean.annual.peak))
 t.test(log(mean.annual.start$mean.biomass), log(mean.annual.end$mean.biomass))
 t.test(log(mean.annual.start$mean.biomass), log(mean.annual.peak$mean.biomass))
 t.test(log(mean.annual.end$mean.biomass), log(mean.annual.peak$mean.biomass))
+
+# and check the role of '76 in this
+t.test(log(mean.annual.start.no76$mean.biomass), log(mean.annual.end$mean.biomass))
+t.test(log(mean.annual.start.no76$mean.biomass), log(mean.annual.peak$mean.biomass))
+
+
+### detour - influence of megatraps
+
+# there are a couple of late-joining traps that are well above average biomass - 
+# such that they're included in the 'late' calculation but not the 'early' one
+# does excluding them make a difference?
+
+# specifically, they are Ewingswode and Tregaron
+
+# try trimming these outliers out first
+
+alltraps.no0.out <- alltraps.no0[which(!(alltraps.no0$trap %in% (c("Ewingswode","Tregaron")))), ]
+
+mean.annual.trim <- ddply(alltraps.no0.out, .(YEAR), summarise,
+                     mean.biomass = gm_mean(inopbiomass))
+
+
+# split this off into periods of interest
+
+mean.annual.start.trim <- mean.annual.trim[which(mean.annual.trim$YEAR %in% 1967:1976), ]
+mean.annual.start.no76.trim <- mean.annual.trim[which(mean.annual.trim$YEAR %in% 1967:1975), ]
+mean.annual.end.trim <- mean.annual.trim[which(mean.annual.trim$YEAR %in% 2008:2017), ]
+mean.annual.peak.trim <- mean.annual.trim[which(mean.annual.trim$YEAR %in% 1972:1981), ]
+
+
+# calculate mean biomasses per trap/decade and s.e.
+mean.start.trim <- gm_mean(mean.annual.start.trim$mean.biomass)
+se.start.trim <- sd(mean.annual.start.trim$mean.biomass)/sqrt(nrow(mean.annual.start.trim))
+
+mean.start.no76.trim <- gm_mean(mean.annual.start.no76.trim$mean.biomass)
+se.start.no76.trim <- sd(mean.annual.start.no76.trim$mean.biomass)/sqrt(nrow(mean.annual.start.no76.trim))
+
+mean.end.trim <- gm_mean(mean.annual.end.trim$mean.biomass)
+se.end.trim <- sd(mean.annual.end.trim$mean.biomass)/sqrt(nrow(mean.annual.end.trim))
+
+mean.peak.trim <- gm_mean(mean.annual.peak.trim$mean.biomass)
+se.peak.trim <- sd(mean.annual.peak.trim$mean.biomass)/sqrt(nrow(mean.annual.peak.trim))
+
+
+# test the mean biomasses per trap/year against each other between decades
+t.test(log(mean.annual.start.trim$mean.biomass), log(mean.annual.end.trim$mean.biomass))
+t.test(log(mean.annual.start.trim$mean.biomass), log(mean.annual.peak.trim$mean.biomass))
+t.test(log(mean.annual.end.trim$mean.biomass), log(mean.annual.peak.trim$mean.biomass))
+
+# and check the role of '76 in this
+t.test(log(mean.annual.start.no76.trim$mean.biomass), log(mean.annual.end.trim$mean.biomass))
+t.test(log(mean.annual.start.no76.trim$mean.biomass), log(mean.annual.peak.trim$mean.biomass))
+
+
+
+
 
 
 
@@ -3741,18 +4142,20 @@ figs3a <- ggplot(baselines.full, aes(x = duration, y = perc.pa))+
   scale_x_continuous(limits = c(0,55), breaks = seq(0,50,10))+
   scale_y_continuous(limits = c(-15,45), breaks = seq(-10,40,10))+
   labs(y = "% change per year in biomass,\nlinear model" ,
-       x = "Duration of dataset (years)") +
+       x = "Duration of dataset (years)",
+       tag = "a") +
   geom_hline(aes(yintercept = 0))+
   theme_classic()+
   theme(axis.text=element_text(size=15),
         axis.title=element_text(size=15),
+        plot.tag=element_text(size=30),
         legend.position = "none")
 
 
 
 figs3a
 
-ggsave("Checked/Figures/Panels/FigS3a.svg", plot = figs3a, device = svg,
+ggsave("Figures/Panels/FigS3a.svg", plot = figs3a, device = svg,
        width = 240, height = 160, units = "mm", limitsize = T)
 
 
@@ -3763,16 +4166,18 @@ figs3b <- ggplot(baselines.full, aes(x = duration, y = diff.perc.pa))+
   scale_x_continuous(limits = c(0,55), breaks = seq(0,50,10))+
   scale_y_continuous(limits = c(-15,45), breaks = seq(-10,40,10))+
   labs(y = "% change per year in biomass,\ntwo-sample" ,
-       x = "Duration of dataset (years)") +
+       x = "Duration of dataset (years)",
+       tag = "c") +
   geom_hline(aes(yintercept = 0))+
   theme_classic()+
   theme(axis.text=element_text(size=15),
         axis.title=element_text(size=15),
+        plot.tag=element_text(size=30),
         legend.position = "none")
 
 figs3b
 
-ggsave("Checked/Figures/Panels/FigS3b.svg", plot = figs3b, device = svg,
+ggsave("Figures/Panels/FigS3b.svg", plot = figs3b, device = svg,
        width = 240, height = 160, units = "mm", limitsize = T)
 
 
@@ -3786,7 +4191,8 @@ figs3e <- ggplot(baselines.full, aes(x = diff.perc.pa, y = perc.pa, colour = agr
   geom_point()+
   scale_colour_manual(values = c("royalblue","goldenrod"))+
   labs(y = "% change per year in biomass,\nlinear model",
-       x = "% change per year in biomass,\ntwo-sample")+
+       x = "% change per year in biomass,\ntwo-sample",
+       tag = "e")+
   scale_x_continuous(limits = c(-15,45), breaks = seq(-10,40,10))+
   scale_y_continuous(limits = c(-15,45), breaks = seq(-10,40,10))+
   geom_hline(aes(yintercept = 0))+
@@ -3795,13 +4201,14 @@ figs3e <- ggplot(baselines.full, aes(x = diff.perc.pa, y = perc.pa, colour = agr
   theme_classic()+
   theme(axis.text=element_text(size=15),
         axis.title=element_text(size=15),
+        plot.tag=element_text(size=30),
         legend.position = "none")
 
 
 figs3e
 
 
-ggsave("Checked/Figures/Panels/FigS3e.svg", plot = figs3e, device = svg,
+ggsave("Figures/Panels/FigS3e.svg", plot = figs3e, device = svg,
        width = 240, height = 160, units = "mm", limitsize = T)
 
 
@@ -3904,15 +4311,15 @@ baselines.trap$agreement <- as.factor(ifelse(baselines.trap$diff.perc.pa > 0 & b
 
 
 # this took a while so write and read it
-write.csv(baselines.trap, "Checked/baselines_trap.csv", row.names = F)
-baselines.trap <- read.csv("Checked/baselines_trap.csv", header = T)
+write.csv(baselines.trap, "baselines_trap.csv", row.names = F)
+baselines.trap <- read.csv("baselines_trap.csv", header = T)
 
 summary(baselines.trap)
 
 
 # check whether direction of effect is consistent between linear model and point-to-point sample
 
-
+baselines.trap$agreement <- as.factor(baselines.trap$agreement)
 summary(baselines.trap$agreement)
 
 proportion.agree.trap <- summary(baselines.trap$agreement)[[1]]/nrow(baselines.trap)
@@ -3930,11 +4337,13 @@ figs3c <- ggplot(baselines.trap, aes(x = duration, y = perc.pa))+
   scale_x_continuous(limits = c(0,55), breaks = seq(0,50,10))+
   scale_y_continuous(limits = c(-50,85), breaks = seq(-50,75,25))+
   labs(y = "% change per year in biomass,\nlinear model" ,
-       x = "Duration of dataset (years)") +
+       x = "Duration of dataset (years)",
+       tag = "b") +
   geom_hline(aes(yintercept = 0))+
   theme_classic()+
   theme(axis.text=element_text(size=15),
         axis.title=element_text(size=15),
+        plot.tag=element_text(size=30),
         legend.position = "none")
 
 
@@ -3943,7 +4352,7 @@ figs3c
 
 
 
-ggsave("Checked/Figures/Panels/FigS3c.svg", plot = figs3c, device = svg,
+ggsave("Figures/Panels/FigS3c.svg", plot = figs3c, device = svg,
        width = 240, height = 160, units = "mm", limitsize = T)
 
 
@@ -3954,17 +4363,19 @@ figs3d <- ggplot(baselines.trap, aes(x = duration, y = diff.perc.pa))+
   scale_x_continuous(limits = c(0,55), breaks = seq(0,50,10))+
   scale_y_continuous(limits = c(-50,85), breaks = seq(-50,75,25))+
   labs(y = "% change per year in biomass,\ntwo-sample" ,
-       x = "Duration of dataset (years)") +
+       x = "Duration of dataset (years)",
+       tag = "d") +
   geom_hline(aes(yintercept = 0))+
   theme_classic()+
   theme(axis.text=element_text(size=15),
         axis.title=element_text(size=15),
+        plot.tag=element_text(size=30),
         legend.position = "none")
 
 figs3d
 
 
-ggsave("Checked/Figures/Panels/FigS3d.svg", plot = figs3d, device = svg,
+ggsave("Figures/Panels/FigS3d.svg", plot = figs3d, device = svg,
        width = 240, height = 160, units = "mm", limitsize = T)
 
 
@@ -3976,7 +4387,8 @@ figs3f <- ggplot(baselines.trap, aes(x = diff.perc.pa, y = perc.pa, colour = agr
   geom_point(alpha = 0.05)+
   scale_colour_manual(values = c("royalblue","goldenrod"))+
   labs(y = "% change per year in biomass,\nlinear model",
-       x = "% change per year in biomass,\ntwo-sample")+
+       x = "% change per year in biomass,\ntwo-sample",
+       tag = "f")+
   scale_x_continuous(limits = c(-50,85), breaks = seq(-50,75,25))+
   scale_y_continuous(limits = c(-50,85), breaks = seq(-50,75,25))+
   geom_hline(aes(yintercept = 0))+
@@ -3985,6 +4397,7 @@ figs3f <- ggplot(baselines.trap, aes(x = diff.perc.pa, y = perc.pa, colour = agr
   theme_classic()+
   theme(axis.text=element_text(size=15),
         axis.title=element_text(size=15),
+        plot.tag=element_text(size=30),
         legend.position = "none")
 
 
@@ -3992,7 +4405,7 @@ figs3f
 
 
 
-ggsave("Checked/Figures/Panels/FigS3f.svg", plot = figs3f, device = svg,
+ggsave("Figures/Panels/FigS3f.svg", plot = figs3f, device = svg,
        width = 240, height = 160, units = "mm", limitsize = T)
 
 
@@ -4009,7 +4422,7 @@ figs3 <- grid.arrange(figs3a,figs3c + ylab(" "),
                       
                       
                       
-ggsave("Checked/Figures/FigS3.svg", plot = figs3, device = svg,
+ggsave("Figures/FigS3.svg", plot = figs3, device = svg,
        width = 350, height = 350, units = "mm", limitsize = T)
 
 
@@ -4027,11 +4440,13 @@ figs4a <- ggplot(baselines.full.20, aes(x = x, y = perc.pa))+
   scale_x_continuous(limits = c(1965,2000))+
   scale_y_continuous(limits = c(-10,15))+
   labs(y = "% change per year in biomass,\nlinear model" ,
-       x = "First year of dataset") +
+       x = "First year of dataset",
+       tag = "a") +
   geom_hline(aes(yintercept = 0))+
   theme_classic()+
   theme(axis.text=element_text(size=15),
         axis.title=element_text(size=15),
+        plot.tag=element_text(size=30),
         legend.position = "none")
 
 
@@ -4039,7 +4454,7 @@ figs4a <- ggplot(baselines.full.20, aes(x = x, y = perc.pa))+
 figs4a
 
 
-ggsave("Checked/Figures/Panels/FigS4a.svg", plot = figs4a, device = svg,
+ggsave("Figures/Panels/FigS4a.svg", plot = figs4a, device = svg,
        width = 240, height = 160, units = "mm", limitsize = T)
 
 
@@ -4050,11 +4465,13 @@ figs4b <- ggplot(baselines.full.20, aes(x = x, y = diff.perc.pa))+
   scale_x_continuous(limits = c(1965,2000))+
   scale_y_continuous(limits = c(-10,15))+
   labs(y = "% change per year in biomass,\ntwo-sample" ,
-       x = "First year of dataset") +
+       x = "First year of dataset",
+       tag = "b") +
   geom_hline(aes(yintercept = 0))+
   theme_classic()+
   theme(axis.text=element_text(size=15),
         axis.title=element_text(size=15),
+        plot.tag=element_text(size=30),
         legend.position = "none")
 
 
@@ -4063,7 +4480,7 @@ figs4b
 
 
 
-ggsave("Checked/Figures/Panels/FigS4b.svg", plot = figs4b, device = svg,
+ggsave("Figures/Panels/FigS4b.svg", plot = figs4b, device = svg,
        width = 240, height = 160, units = "mm", limitsize = T)
 
 
@@ -4079,7 +4496,7 @@ figs4 <- grid.arrange(gA, gB, ncol=1)
 
 
 
-ggsave("Checked/Figures/FigS4.svg", plot = figs4, device = svg,
+ggsave("Figures/FigS4.svg", plot = figs4, device = svg,
        width = 200, height = 200, units = "mm", limitsize = T)
 
 
@@ -4220,7 +4637,7 @@ figs5 <- ggplot(fourier, aes(x = years.per.cycle, y = normp))+
 figs5
 
 
-ggsave("Checked/Figures/FigS5.svg", plot = figs5, device = svg,
+ggsave("Figures/FigS5.svg", plot = figs5, device = svg,
        width = 150, height = 80, units = "mm", limitsize = T)
 
 
@@ -4237,53 +4654,6 @@ for (n in 2:9999){
 fourier.peaks <- fourier[which(fourier$peak == T), ]
 
 
-###### development code - unused ####
-
-#### dynamic relationships
-
-# try relationships of biomass to temperature and rainfall as time-series
-
-ts.biomass <- ts(change.average.all$mean.change.inopbiomass, frequency = 1, start = 1967)
-
-plot.ts(ts.biomass)
-
-
-ts.biomass.raw <- ts(averageall$inopbiomass, frequency = 1, start = 1967)
-plot.ts(ts.biomass.raw)
-
-log.ts <- log(ts.biomass.raw)
-plot.ts(log.ts)
-
-
-## autocorrelation
-acf.biomass <- acf(ts.biomass.raw)
-pacf.biomass <- pacf(ts.biomass.raw)
-
-acf.log.biomass <- acf(log.ts)
-pacf.log.biomass <- pacf(log.ts)
-
-
-# turn temp and rain into time series too
-
-ts.temp <- ts(change.average.all$mean.monthly.temp, frequency = 1, start = 1967)
-ts.rain <- ts(change.average.all$mean.annual.rain, frequency = 1, start = 1967)
-
-plot.ts(cbind(ts.biomass.raw,log.ts,ts.temp,ts.rain))
-
-
-# cross-correlation
-ccf.temp <- ccf(ts.biomass.raw,ts.temp)
-ccf.rain <- ccf(ts.biomass.raw,ts.rain)
-
-ccf.log.temp <- ccf(log.ts,ts.temp)
-ccf.log.rain <- ccf(log.ts,ts.rain)
-
-# test if stationary
-adf.test(ts.biomass) # NOT stationary
-kpss.test(ts.biomass)
-
-adf.test(log.ts) # stationary
-kpss.test(log.ts)
 
 
 
